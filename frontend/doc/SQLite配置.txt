@@ -1,0 +1,6 @@
+
+# 安装可视化工具
+sudo apt install sqlitebrowser -y
+# 启动
+sqlitebrowser
+

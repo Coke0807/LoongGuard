@@ -1,0 +1,93 @@
+website管理后端环境配置
+
+1、安转fastapi框架依赖
+进入虚拟环境
+tjdz@tjdz-pc:~/venv-ui$ source bin/activate
+(venv-ui) tjdz@tjdz-pc:~/venv-ui$ pwd
+/home/tjdz/venv-ui
+(venv-ui) tjdz@tjdz-pc:~/venv-ui$
+(venv-ui) tjdz@tjdz-pc:~/venv-ui$ pip install fastapi
+Looking in indexes: https://lpypi.loongnix.cn/loongson/pypi, https://pypi.tuna.tsinghua.edu.cn/simple
+Requirement already satisfied: fastapi in ./lib/python3.13/site-packages (0.139.0)
+Requirement already satisfied: starlette>=0.46.0 in ./lib/python3.13/site-packages (from fastapi) (1.3.1)
+Requirement already satisfied: pydantic>=2.9.0 in ./lib/python3.13/site-packages (from fastapi) (2.13.4)
+Requirement already satisfied: typing-extensions>=4.8.0 in ./lib/python3.13/site-packages (from fastapi) (4.16.0)
+Requirement already satisfied: typing-inspection>=0.4.2 in ./lib/python3.13/site-packages (from fastapi) (0.4.2)
+Requirement already satisfied: annotated-doc>=0.0.2 in ./lib/python3.13/site-packages (from fastapi) (0.0.4)
+Requirement already satisfied: annotated-types>=0.6.0 in ./lib/python3.13/site-packages (from pydantic>=2.9.0->fastapi) (0.7.0)
+Requirement already satisfied: pydantic-core==2.46.4 in ./lib/python3.13/site-packages (from pydantic>=2.9.0->fastapi) (2.46.4)
+Requirement already satisfied: anyio<5,>=3.6.2 in ./lib/python3.13/site-packages (from starlette>=0.46.0->fastapi) (4.14.2)
+Requirement already satisfied: idna>=2.8 in /usr/lib/python3/dist-packages (from anyio<5,>=3.6.2->starlette>=0.46.0->fastapi) (3.10)
+(venv-ui) tjdz@tjdz-pc:~/venv-ui$
+
+2、安装openpyxl 3.1.5 使用华为源，清华大学和龙芯版本都低
+(venv-ui) tjdz@tjdz-pc:~/venv-ui$ pip install openpyxl==3.1.5 -i https://repo.huaweicloud.com/repository/pypi/simple/
+Looking in indexes: https://repo.huaweicloud.com/repository/pypi/simple/, https://pypi.tuna.tsinghua.edu.cn/simple
+Collecting openpyxl==3.1.5
+  Downloading https://repo.huaweicloud.com/repository/pypi/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl (250 kB)
+Requirement already satisfied: et-xmlfile in /home/tjdz/venv-ui/lib/python3.13/site-packages (from openpyxl==3.1.5) (2.0.0)
+Installing collected packages: openpyxl
+Successfully installed openpyxl-3.1.5
+
+3、安装python-multipart-0.0.32
+(venv-ui) tjdz@tjdz-pc:~/vss/website$ pip install python-multipart -i  https://repo.huaweicloud.com/repository/pypi/simple/
+Looking in indexes: https://repo.huaweicloud.com/repository/pypi/simple/, https://pypi.tuna.tsinghua.edu.cn/simple
+Collecting python-multipart
+  Downloading https://repo.huaweicloud.com/repository/pypi/packages/e1/04/e8135ebd1ad02c56ec633277529b2602ff99ff634be76cdba5744cf554fd/python_multipart-0.0.32-py3-none-any.whl (30 kB)
+Installing collected packages: python-multipart
+Successfully installed python-multipart-0.0.32
+
+4、安装jinja2 3.1.6
+(venv-ui) tjdz@tjdz-pc:~/vss/website$ pip install jinja2 -i  https://repo.huaweicloud.com/repository/pypi/simple/
+Looking in indexes: https://repo.huaweicloud.com/repository/pypi/simple/, https://pypi.tuna.tsinghua.edu.cn/simple
+Collecting jinja2
+  Downloading https://repo.huaweicloud.com/repository/pypi/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl (134 kB)
+Collecting MarkupSafe>=2.0 (from jinja2)
+  Downloading https://repo.huaweicloud.com/repository/pypi/packages/7e/99/7690b6d4034fffd95959cbe0c02de8deb3098cc577c67bb6a24fe5d7caa7/markupsafe-3.0.3.tar.gz (80 kB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+  Preparing metadata (pyproject.toml) ... done
+Building wheels for collected packages: MarkupSafe
+  Building wheel for MarkupSafe (pyproject.toml) ... done
+  Created wheel for MarkupSafe: filename=markupsafe-3.0.3-cp313-cp313-linux_loongarch64.whl size=23483 sha256=1eb32371d34afcd409ce3edcdc6e5aa71d0189904f3c50845877f7598306cfb9
+  Stored in directory: /home/tjdz/.cache/pip/wheels/e2/e1/0d/3a2cc82de4756fdf652fb6b66c2df06fdc69a31910db51e555
+Successfully built MarkupSafe
+Installing collected packages: MarkupSafe, jinja2
+Successfully installed MarkupSafe-3.0.3 jinja2-3.1.6
+
+5、启动管理后台
+(venv-ui) tjdz@tjdz-pc:~/vss/website$ sudo $(which python3) main.py
+INFO:     Started server process [4106]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on https://0.0.0.0:8000 (Press CTRL+C to quit)
+
+
+6、配置防火墙
+tjdz@tjdz-pc:~$ systemctl status firewalld
+● firewalld.service - firewalld - dynamic firewall daemon
+     Loaded: loaded (/usr/lib/systemd/system/firewalld.service; enabled; preset: enabled)
+     Active: active (running) since Sun 2026-07-26 19:11:31 CST; 1h 53min ago
+ Invocation: 7e374d2afb7a45b6abd21a64424038c9
+       Docs: man:firewalld(1)
+    Process: 718 ExecStartPost=/usr/bin/firewall-cmd --state (code=exited, status=0/SUCCESS)
+   Main PID: 707 (firewalld)
+      Tasks: 2 (limit: 16857)
+     Memory: 63M (peak: 96.3M)
+        CPU: 1.541s
+     CGroup: /system.slice/firewalld.service
+             └─707 /usr/bin/python3 /usr/sbin/firewalld --nofork --nopid
+
+Warning: some journal files were not opened due to insufficient permissions.
+tjdz@tjdz-pc:~$ systemctl disable firewalld --now
+Removed '/etc/systemd/system/multi-user.target.wants/firewalld.service'.
+Removed '/etc/systemd/system/dbus-org.fedoraproject.FirewallD1.service'.
+
+
+
+浏览器访问
+http://127.0.0.1:8000/admin/login
+
+
+
+

@@ -1,0 +1,24 @@
+echo "===== 物理PCI音频硬件 ====="
+lspci | grep -i audio
+echo -e "\n===== USB音频设备 ====="
+lsusb | grep -i audio
+echo -e "\n===== ALSA播放硬件 ====="
+aplay -l
+echo -e "\n===== ALSA录音硬件 ====="
+arecord -l
+echo -e "\n===== PipeWire输出设备 ====="
+pactl list short sinks
+echo -e "\n===== PipeWire输入设备 ====="
+pactl list short sources
+
+
+tjdz@tjdz-pc:~$ pactl list short sinks
+438     alsa_output.pci-0000_00_06.2.hdmi-stereo        PipeWire        s32le 2ch 48000Hz       SUSPENDED
+598     alsa_output.usb-CF-IC_HK_MIC_26-0518-1200-0-00.analog-stereo    PipeWire        s16le 2ch 48000Hz       RUNNING
+
+
+切换声音：如切换至USB
+pactl set-default-sink alsa_output.usb-CF-IC_HK_MIC_26-0518-1200-0-00.analog-stereo
+
+打开音量面板，可以设置
+pavucontrol

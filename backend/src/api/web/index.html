@@ -1,0 +1,1860 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LoongGuard - AI 安全监护系统</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+    --bg-primary: #0a0e1a;
+    --bg-secondary: #111827;
+    --bg-tertiary: #1f2937;
+    --bg-card: #1a1f2e;
+    --border-color: #2a3142;
+    --text-primary: #f3f4f6;
+    --text-secondary: #9ca3af;
+    --text-muted: #6b7280;
+    --accent-blue: #3b82f6;
+    --accent-blue-hover: #2563eb;
+    --accent-green: #10b981;
+    --accent-red: #ef4444;
+    --accent-yellow: #f59e0b;
+    --accent-purple: #8b5cf6;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 16px;
+    --transition: all 0.2s ease;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Microsoft YaHei', sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+/* Header */
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 24px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(10px);
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.logo {
+    width: 36px;
+    height: 36px;
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 16px;
+    color: white;
+    flex-shrink: 0;
+}
+
+.header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.5px;
+    line-height: 1.2;
+}
+
+.header-subtitle {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.status-badge {
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.status-badge.online {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--accent-green);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.status-badge.offline {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--accent-red);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: pulse 2s infinite;
+    flex-shrink: 0;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Main Layout */
+.main {
+    display: flex;
+    height: calc(100vh - 61px);
+    gap: 0;
+}
+
+/* Left Panel - Video & Upload */
+.left-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    gap: 16px;
+    min-width: 0;
+    overflow-y: auto;
+}
+
+/* Video Container */
+.video-section {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.video-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.video-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.video-title-icon {
+    width: 18px;
+    height: 18px;
+    color: var(--accent-blue);
+    flex-shrink: 0;
+}
+
+.video-controls {
+    display: flex;
+    gap: 6px;
+}
+
+.video-container {
+    position: relative;
+    background: #000;
+    aspect-ratio: 16 / 9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.video-container img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.video-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: var(--text-muted);
+    padding: 32px;
+}
+
+.placeholder-icon {
+    width: 56px;
+    height: 56px;
+    opacity: 0.5;
+    flex-shrink: 0;
+}
+
+.placeholder-text {
+    font-size: 13px;
+    text-align: center;
+    line-height: 1.6;
+}
+
+.placeholder-text small {
+    font-size: 11px;
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+/* Stats Bar */
+.stats-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    padding: 12px 16px;
+    background: var(--bg-tertiary);
+}
+
+.stat-card {
+    text-align: center;
+    padding: 8px;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+}
+
+.stat-value {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--accent-blue);
+    font-family: 'JetBrains Mono', monospace;
+    line-height: 1.2;
+}
+
+.stat-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.stat-card.danger .stat-value {
+    color: var(--accent-red);
+}
+
+/* Upload Section */
+.upload-section {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.upload-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.upload-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.upload-area {
+    padding: 16px;
+}
+
+.upload-dropzone {
+    border: 2px dashed var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 32px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: var(--transition);
+    background: var(--bg-tertiary);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.upload-dropzone:hover {
+    border-color: var(--accent-blue);
+    background: rgba(59, 130, 246, 0.05);
+}
+
+.upload-dropzone.dragover {
+    border-color: var(--accent-blue);
+    background: rgba(59, 130, 246, 0.1);
+    transform: scale(1.01);
+}
+
+.upload-icon {
+    width: 40px;
+    height: 40px;
+    color: var(--accent-blue);
+    flex-shrink: 0;
+}
+
+.upload-text {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.upload-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.upload-formats {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+.format-tag {
+    padding: 3px 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+}
+
+/* Upload Progress */
+.upload-progress {
+    display: none;
+    padding: 16px;
+    border-top: 1px solid var(--border-color);
+}
+
+.upload-progress.active {
+    display: block;
+}
+
+.progress-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.progress-filename {
+    font-size: 12px;
+    color: var(--text-primary);
+    font-weight: 500;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.progress-percent {
+    font-size: 12px;
+    color: var(--accent-blue);
+    font-weight: 600;
+    font-family: 'JetBrains Mono', monospace;
+    flex-shrink: 0;
+}
+
+.progress-bar {
+    height: 6px;
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+    border-radius: 3px;
+    transition: width 0.3s ease;
+    width: 0%;
+}
+
+.progress-status {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 6px;
+}
+
+/* Analysis Section */
+.analysis-section {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    overflow: hidden;
+    display: none;
+    flex-shrink: 0;
+}
+
+.analysis-section.active {
+    display: block;
+}
+
+.analysis-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.analysis-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.analysis-content {
+    padding: 16px;
+}
+
+.analysis-progress {
+    margin-bottom: 16px;
+}
+
+.analysis-progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.analysis-progress-text {
+    font-size: 12px;
+    color: var(--text-secondary);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-right: 12px;
+}
+
+.analysis-progress-percent {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--accent-blue);
+    font-family: 'JetBrains Mono', monospace;
+    flex-shrink: 0;
+}
+
+.analysis-bar {
+    height: 10px;
+    background: var(--bg-tertiary);
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.analysis-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-green), var(--accent-blue));
+    border-radius: 5px;
+    transition: width 0.5s ease;
+    width: 0%;
+}
+
+.analysis-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.analysis-stat {
+    text-align: center;
+    padding: 12px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+}
+
+.analysis-stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--accent-blue);
+    font-family: 'JetBrains Mono', monospace;
+    line-height: 1.2;
+}
+
+.analysis-stat-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    text-transform: uppercase;
+}
+
+/* Detection Results */
+.detection-results {
+    margin-top: 16px;
+}
+
+.detection-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.detection-list {
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.detection-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    margin-bottom: 6px;
+    border: 1px solid var(--border-color);
+    animation: slideIn 0.3s ease-out;
+    gap: 8px;
+}
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+.detection-class {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent-red);
+    padding: 2px 6px;
+    background: rgba(239, 68, 68, 0.15);
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.detection-confidence {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+}
+
+.detection-time {
+    font-size: 10px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+/* Right Panel - Alerts */
+.right-panel {
+    width: 340px;
+    background: var(--bg-secondary);
+    border-left: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+}
+
+.alerts-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.alerts-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.alert-count-badge {
+    background: var(--accent-red);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    min-width: 24px;
+    text-align: center;
+}
+
+.alert-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+}
+
+.no-alerts {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 12px;
+    gap: 10px;
+    padding: 20px;
+}
+
+.no-alerts-icon {
+    width: 40px;
+    height: 40px;
+    opacity: 0.5;
+    flex-shrink: 0;
+}
+
+.alert-item {
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    border: 1px solid var(--border-color);
+    border-left: 3px solid var(--text-muted);
+    animation: slideIn 0.3s ease-out;
+}
+
+.alert-item.critical {
+    border-left-color: var(--accent-red);
+    background: rgba(239, 68, 68, 0.05);
+}
+
+.alert-item.high {
+    border-left-color: var(--accent-yellow);
+    background: rgba(245, 158, 11, 0.05);
+}
+
+.alert-item.medium {
+    border-left-color: var(--accent-blue);
+    background: rgba(59, 130, 246, 0.05);
+}
+
+.alert-item.low {
+    border-left-color: var(--text-muted);
+}
+
+.alert-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 6px;
+    gap: 8px;
+}
+
+.alert-type {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-primary);
+    flex: 1;
+}
+
+.alert-severity {
+    font-size: 9px;
+    font-weight: 600;
+    padding: 2px 5px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.alert-severity.critical {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--accent-red);
+}
+
+.alert-severity.high {
+    background: rgba(245, 158, 11, 0.2);
+    color: var(--accent-yellow);
+}
+
+.alert-severity.medium {
+    background: rgba(59, 130, 246, 0.2);
+    color: var(--accent-blue);
+}
+
+.alert-severity.low {
+    background: rgba(107, 114, 128, 0.2);
+    color: var(--text-muted);
+}
+
+.alert-desc {
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-bottom: 6px;
+}
+
+.alert-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 6px;
+}
+
+.alert-time {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.ack-btn {
+    font-size: 10px;
+    font-weight: 500;
+    padding: 3px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--accent-green);
+    background: transparent;
+    color: var(--accent-green);
+    cursor: pointer;
+    transition: var(--transition);
+    font-family: inherit;
+}
+
+.ack-btn:hover {
+    background: rgba(16, 185, 129, 0.15);
+}
+
+.ack-btn:disabled {
+    border-color: var(--text-muted);
+    color: var(--text-muted);
+    cursor: default;
+    background: transparent;
+}
+
+.alert-item.acknowledged {
+    opacity: 0.5;
+    border-left-style: dashed;
+}
+
+.alert-item.acknowledged .ack-btn {
+    display: none;
+}
+
+.ack-tag {
+    font-size: 9px;
+    color: var(--accent-green);
+    font-weight: 500;
+}
+
+/* Alert Filter Bar */
+.alert-filters {
+    display: flex;
+    gap: 6px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.alert-filters select,
+.alert-filters button {
+    font-size: 10px;
+    font-family: inherit;
+    padding: 4px 6px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.alert-filters select:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+}
+
+.filter-btn {
+    background: var(--accent-blue) !important;
+    color: white !important;
+    border: none !important;
+    padding: 4px 10px !important;
+    font-weight: 500;
+}
+
+.filter-btn:hover {
+    background: var(--accent-blue-hover) !important;
+}
+
+.filter-btn.secondary {
+    background: var(--bg-tertiary) !important;
+    color: var(--text-secondary) !important;
+    border: 1px solid var(--border-color) !important;
+}
+
+.filter-count {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+/* Buttons */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition);
+    border: 1px solid transparent;
+    font-family: inherit;
+    white-space: nowrap;
+}
+
+.btn-primary {
+    background: var(--accent-blue);
+    color: white;
+    border-color: var(--accent-blue);
+}
+
+.btn-primary:hover {
+    background: var(--accent-blue-hover);
+    border-color: var(--accent-blue-hover);
+}
+
+.btn-secondary {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+}
+
+.btn-secondary:hover {
+    background: var(--bg-card);
+    border-color: var(--text-muted);
+}
+
+.btn-sm {
+    padding: 5px 10px;
+    font-size: 11px;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+    .right-panel {
+        width: 300px;
+    }
+}
+
+@media (max-width: 900px) {
+    .main {
+        flex-direction: column;
+    }
+
+    .right-panel {
+        width: 100%;
+        height: 280px;
+    }
+
+    .stats-bar {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+/* Error Message */
+.error-message {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--accent-red);
+    display: none;
+    line-height: 1.5;
+}
+
+.error-message.active {
+    display: block;
+}
+
+/* Success Message */
+.success-message {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--accent-green);
+    display: none;
+    line-height: 1.5;
+}
+
+.success-message.active {
+    display: block;
+}
+
+/* Loading Spinner */
+.spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--accent-blue);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Tooltip */
+.tooltip {
+    position: relative;
+}
+
+.tooltip::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 5px 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-size: 10px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: var(--transition);
+    margin-bottom: 6px;
+}
+
+.tooltip:hover::after {
+    opacity: 1;
+    visibility: visible;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <div class="header-left">
+        <div class="logo">LG</div>
+        <div>
+            <h1>LoongGuard</h1>
+            <div class="header-subtitle">AI 安全监护系统</div>
+        </div>
+    </div>
+    <div class="header-right">
+        <span id="statusBadge" class="status-badge offline">
+            <span class="status-dot"></span>
+            离线
+        </span>
+    </div>
+</div>
+
+<div class="main">
+    <!-- Left Panel -->
+    <div class="left-panel">
+        <!-- Video Section -->
+        <div class="video-section">
+            <div class="video-header">
+                <div class="video-title">
+                    <svg class="video-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                        <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                    </svg>
+                    实时视频流
+                </div>
+                <div class="video-controls">
+                    <button class="btn btn-secondary btn-sm" onclick="toggleStream()">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                        </svg>
+                        开始
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="stopStream()">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="6" y="4" width="4" height="16"></rect>
+                            <rect x="14" y="4" width="4" height="16"></rect>
+                        </svg>
+                        停止
+                    </button>
+                </div>
+            </div>
+            <div class="video-container" id="videoContainer">
+                <div class="video-placeholder" id="placeholder">
+                    <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                        <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                    </svg>
+                    <div class="placeholder-text">等待视频流连接...<br><small>或点击下方上传视频文件进行检测</small></div>
+                </div>
+                <img id="streamImg" style="display:none" alt="实时视频流">
+            </div>
+            <div class="stats-bar">
+                <div class="stat-card">
+                    <div class="stat-value" id="statFps">--</div>
+                    <div class="stat-label">帧率</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="statFrames">0</div>
+                    <div class="stat-label">帧数</div>
+                </div>
+                <div class="stat-card danger">
+                    <div class="stat-value" id="statAlerts">0</div>
+                    <div class="stat-label">告警</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="statUptime">0s</div>
+                    <div class="stat-label">运行时长</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload Section -->
+        <div class="upload-section">
+            <div class="upload-header">
+                <div class="upload-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    视频上传
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="resetUpload()">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="1 4 1 10 7 10"></polyline>
+                        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                    </svg>
+                    重置
+                </button>
+            </div>
+            <div class="upload-area">
+                <div class="upload-dropzone" id="uploadDropzone" onclick="document.getElementById('fileInput').click()">
+                    <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    <div class="upload-text">拖拽视频文件到此处，或点击浏览选择</div>
+                    <div class="upload-hint">最大文件大小：500MB</div>
+                    <div class="upload-formats">
+                        <span class="format-tag">MP4</span>
+                        <span class="format-tag">AVI</span>
+                        <span class="format-tag">MOV</span>
+                        <span class="format-tag">MKV</span>
+                        <span class="format-tag">FLV</span>
+                        <span class="format-tag">WMV</span>
+                        <span class="format-tag">WEBM</span>
+                    </div>
+                </div>
+                <input type="file" id="fileInput" accept=".mp4,.avi,.mov,.mkv,.flv,.wmv,.webm" style="display:none">
+            </div>
+            <div class="upload-progress" id="uploadProgress">
+                <div class="progress-info">
+                    <span class="progress-filename" id="progressFilename">video.mp4</span>
+                    <span class="progress-percent" id="progressPercent">0%</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-status" id="progressStatus">上传中...</div>
+            </div>
+            <div class="error-message" id="uploadError"></div>
+            <div class="success-message" id="uploadSuccess"></div>
+        </div>
+
+        <!-- Analysis Section -->
+        <div class="analysis-section" id="analysisSection">
+            <div class="analysis-header">
+                <div class="analysis-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    分析结果
+                </div>
+                <button class="btn btn-primary btn-sm" id="startAnalysisBtn" onclick="startAnalysis()">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    开始分析
+                </button>
+            </div>
+            <div class="analysis-content">
+                <div class="analysis-progress">
+                    <div class="analysis-progress-header">
+                        <span class="analysis-progress-text" id="analysisProgressText">处理帧中...</span>
+                        <span class="analysis-progress-percent" id="analysisProgressPercent">0%</span>
+                    </div>
+                    <div class="analysis-bar">
+                        <div class="analysis-fill" id="analysisFill"></div>
+                    </div>
+                </div>
+                <div class="analysis-stats">
+                    <div class="analysis-stat">
+                        <div class="analysis-stat-value" id="analysisFrames">0</div>
+                        <div class="analysis-stat-label">已处理帧</div>
+                    </div>
+                    <div class="analysis-stat">
+                        <div class="analysis-stat-value" id="analysisDetections">0</div>
+                        <div class="analysis-stat-label">检测目标</div>
+                    </div>
+                    <div class="analysis-stat">
+                        <div class="analysis-stat-value" id="analysisAlerts">0</div>
+                        <div class="analysis-stat-label">触发告警</div>
+                    </div>
+                </div>
+                <div class="detection-results">
+                    <div class="detection-title">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                        </svg>
+                        最近检测
+                    </div>
+                    <div class="detection-list" id="detectionList">
+                        <div class="no-alerts" style="height: 80px;">
+                            <div>暂无检测结果</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Panel - Alerts -->
+    <div class="right-panel">
+        <div class="alerts-header">
+            <div class="alerts-title">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                </svg>
+                告警历史
+            </div>
+            <span class="alert-count-badge" id="alertBadge">0</span>
+        </div>
+        <div class="alert-filters" id="alertFilters">
+            <select id="filterSeverity">
+                <option value="">全部级别</option>
+                <option value="critical">严重</option>
+                <option value="high">高</option>
+                <option value="medium">中</option>
+                <option value="low">低</option>
+            </select>
+            <select id="filterType">
+                <option value="">全部类型</option>
+                <option value="dangerous_object">危险物品</option>
+                <option value="prone_sleep">俯卧睡姿</option>
+                <option value="environment">环境异常</option>
+                <option value="motion_abnormal">运动异常</option>
+            </select>
+            <select id="filterAck">
+                <option value="">全部状态</option>
+                <option value="false">未确认</option>
+                <option value="true">已确认</option>
+            </select>
+            <button class="filter-btn" onclick="loadAlertsFromDB()">加载历史</button>
+            <button class="filter-btn secondary" onclick="ackAllAlerts()">全部确认</button>
+            <span class="filter-count" id="filterCount"></span>
+        </div>
+        <div class="alert-list" id="alertList">
+            <div class="no-alerts" id="noAlerts">
+                <svg class="no-alerts-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                </svg>
+                <div>暂无告警记录</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    // ── 常量 ─────────────────────────────────────────
+    const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
+    const ALLOWED_EXTENSIONS = ['.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm'];
+    const API_BASE = '';
+
+    // ── 状态 ─────────────────────────────────────────
+    let currentTaskId = null;
+    let sseConnection = null;
+    let alertCount = 0;
+    let statsTimer = null;
+    let streamActive = false;
+
+    // ── DOM 元素 ──────────────────────────────────────
+    const img = document.getElementById('streamImg');
+    const placeholder = document.getElementById('placeholder');
+    const badge = document.getElementById('statusBadge');
+    const alertList = document.getElementById('alertList');
+    const noAlerts = document.getElementById('noAlerts');
+    const alertBadge = document.getElementById('alertBadge');
+    const fileInput = document.getElementById('fileInput');
+    const dropzone = document.getElementById('uploadDropzone');
+    const uploadProgress = document.getElementById('uploadProgress');
+    const progressFill = document.getElementById('progressFill');
+    const progressPercent = document.getElementById('progressPercent');
+    const progressFilename = document.getElementById('progressFilename');
+    const progressStatus = document.getElementById('progressStatus');
+    const uploadError = document.getElementById('uploadError');
+    const uploadSuccess = document.getElementById('uploadSuccess');
+    const analysisSection = document.getElementById('analysisSection');
+    const startAnalysisBtn = document.getElementById('startAnalysisBtn');
+    const detectionList = document.getElementById('detectionList');
+
+    // ── 视频流 (MJPEG) ─────────────────────────────
+    function startStream() {
+        if (streamActive) return;
+
+        img.onload = function() {
+            img.style.display = 'block';
+            placeholder.style.display = 'none';
+            badge.innerHTML = '<span class="status-dot"></span> 在线';
+            badge.className = 'status-badge online';
+            streamActive = true;
+        };
+
+        img.onerror = function() {
+            img.style.display = 'none';
+            placeholder.style.display = 'flex';
+            placeholder.innerHTML = `
+                <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                </svg>
+                <div class="placeholder-text">视频流已断开，正在重试...</div>
+            `;
+            badge.innerHTML = '<span class="status-dot"></span> 离线';
+            badge.className = 'status-badge offline';
+            streamActive = false;
+            setTimeout(function() { img.src = '/stream?' + Date.now(); }, 3000);
+        };
+
+        img.src = '/stream';
+    }
+
+    function stopStream() {
+        img.src = '';
+        img.style.display = 'none';
+        placeholder.style.display = 'flex';
+        placeholder.innerHTML = `
+            <svg class="placeholder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+            </svg>
+            <div class="placeholder-text">视频流已停止<br><small>点击"开始"按钮恢复</small></div>
+        `;
+        badge.innerHTML = '<span class="status-dot"></span> 离线';
+        badge.className = 'status-badge offline';
+        streamActive = false;
+    }
+
+    function toggleStream() {
+        if (streamActive) {
+            stopStream();
+        } else {
+            startStream();
+        }
+    }
+
+    // ── 统计数据轮询 ─────────────────────────────────
+    function pollStats() {
+        fetch(API_BASE + '/api/v1/stats')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                document.getElementById('statFps').textContent = data.avg_fps || '--';
+                document.getElementById('statFrames').textContent = data.frame_count || 0;
+                document.getElementById('statAlerts').textContent = data.alert_count || 0;
+
+                var sec = data.uptime_sec || 0;
+                if (sec < 60) {
+                    document.getElementById('statUptime').textContent = Math.round(sec) + '秒';
+                } else if (sec < 3600) {
+                    document.getElementById('statUptime').textContent = Math.round(sec / 60) + '分';
+                } else {
+                    document.getElementById('statUptime').textContent = (sec / 3600).toFixed(1) + '时';
+                }
+            })
+            .catch(function() {});
+    }
+
+    function startStats() {
+        pollStats();
+        statsTimer = setInterval(pollStats, 2000);
+    }
+
+    // ── WebSocket 告警推送 ───────────────────────────
+    function connectWS() {
+        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        var ws = new WebSocket(proto + '//' + location.host + '/ws/alerts');
+
+        ws.onopen = function() {
+            console.log('[WS] 已连接');
+        };
+
+        ws.onmessage = function(event) {
+            try {
+                var alert = JSON.parse(event.data);
+                addAlert(alert);
+            } catch(e) {
+                console.error('[WS] 解析错误:', e);
+            }
+        };
+
+        ws.onclose = function() {
+            console.log('[WS] 已断开，3秒后重连...');
+            setTimeout(connectWS, 3000);
+        };
+
+        ws.onerror = function() {
+            ws.close();
+        };
+    }
+
+    // ── 告警渲染 ─────────────────────────────────────
+    function addAlert(alert) {
+        noAlerts.style.display = 'none';
+        alertCount++;
+        alertBadge.textContent = alertCount > 99 ? '99+' : alertCount;
+
+        var severity = alert.severity || 'medium';
+        var type = alert.alert_type || 'unknown';
+        var desc = alert.description || '';
+        var time = alert.timestamp ? new Date(alert.timestamp).toLocaleTimeString() : '';
+        var alertId = alert.alert_id || '';
+        var isAcked = alert.acknowledged ? true : false;
+
+        var typeLabels = {
+            'dangerous_object': '危险物品',
+            'prone_sleep': '俯卧睡姿',
+            'environment': '环境异常',
+            'motion_abnormal': '运动异常'
+        };
+
+        var severityLabels = {
+            'critical': '严重',
+            'high': '高',
+            'medium': '中',
+            'low': '低'
+        };
+
+        var div = document.createElement('div');
+        div.className = 'alert-item ' + severity + (isAcked ? ' acknowledged' : '');
+        div.setAttribute('data-alert-id', alertId);
+        div.innerHTML = `
+            <div class="alert-header">
+                <span class="alert-type">${typeLabels[type] || type.toUpperCase()}</span>
+                <span class="alert-severity ${severity}">${severityLabels[severity] || severity.toUpperCase()}</span>
+            </div>
+            <div class="alert-desc">${escapeHtml(desc)}</div>
+            <div class="alert-footer">
+                <span class="alert-time">${time}</span>
+                <span class="ack-tag" style="display:${isAcked ? 'inline' : 'none'}">已确认</span>
+            </div>
+        `;
+
+        if (!isAcked && alertId) {
+            var ackBtn = document.createElement('button');
+            ackBtn.className = 'ack-btn';
+            ackBtn.textContent = '确认';
+            ackBtn.setAttribute('data-ack-id', alertId);
+            div.querySelector('.alert-footer').appendChild(ackBtn);
+        }
+
+        if (alertList.firstChild && alertList.firstChild !== noAlerts) {
+            alertList.insertBefore(div, alertList.firstChild);
+        } else {
+            alertList.appendChild(div);
+        }
+
+        while (alertList.children.length > 200) {
+            alertList.removeChild(alertList.lastChild);
+        }
+    }
+
+    // ─ 告警管理 ─────────────────────────────────────
+    // 事件委托：通过 alertList 容器捕获 .ack-btn 点击，避免 onclick 字符串注入
+    alertList.addEventListener('click', function(e) {
+        var btn = e.target.closest('.ack-btn');
+        if (!btn) return;
+        var alertId = btn.getAttribute('data-ack-id');
+        if (!alertId) return;
+
+        fetch('/api/v1/alerts/' + encodeURIComponent(alertId) + '/ack', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.ok) {
+                    var item = btn.closest('.alert-item');
+                    item.classList.add('acknowledged');
+                    btn.style.display = 'none';
+                    var tag = item.querySelector('.ack-tag');
+                    if (tag) tag.style.display = 'inline';
+                }
+            })
+            .catch(function(e) { console.error('[确认] 失败:', e); });
+    };
+
+    window.ackAllAlerts = function() {
+        fetch('/api/v1/alerts/ack-all', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.acked > 0) {
+                    document.querySelectorAll('.alert-item:not(.acknowledged)').forEach(function(item) {
+                        item.classList.add('acknowledged');
+                        var btn = item.querySelector('.ack-btn');
+                        if (btn) btn.style.display = 'none';
+                        var tag = item.querySelector('.ack-tag');
+                        if (tag) tag.style.display = 'inline';
+                        else {
+                            var footer = item.querySelector('.alert-footer');
+                            if (footer) {
+                                var newTag = document.createElement('span');
+                                newTag.className = 'ack-tag';
+                                newTag.textContent = '已确认';
+                                footer.appendChild(newTag);
+                            }
+                        }
+                    });
+                }
+            })
+            .catch(function(e) { console.error('[全部确认] 失败:', e); });
+    };
+
+    window.loadAlertsFromDB = function() {
+        var severity = document.getElementById('filterSeverity').value;
+        var type = document.getElementById('filterType').value;
+        var acked = document.getElementById('filterAck').value;
+
+        var params = new URLSearchParams();
+        params.set('page_size', '50');
+        if (severity) params.set('severity', severity);
+        if (type) params.set('type', type);
+        if (acked !== '') params.set('acknowledged', acked);
+
+        fetch('/api/v1/alerts?' + params.toString())
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                while (alertList.firstChild) {
+                    alertList.removeChild(alertList.firstChild);
+                }
+                alertCount = 0;
+
+                if (data.data && data.data.length > 0) {
+                    noAlerts.style.display = 'none';
+                    data.data.forEach(function(alert) { addAlert(alert); });
+                    alertCount = data.data.length;
+                } else {
+                    alertList.appendChild(noAlerts);
+                    noAlerts.style.display = 'flex';
+                }
+                alertBadge.textContent = alertCount > 99 ? '99+' : alertCount;
+                var countEl = document.getElementById('filterCount');
+                if (countEl) countEl.textContent = '共 ' + data.total + ' 条告警';
+            })
+            .catch(function(e) { console.error('[加载] 失败:', e); });
+    };
+
+    function escapeHtml(text) {
+        var d = document.createElement('div');
+        d.textContent = text;
+        return d.innerHTML;
+    }
+
+    // ── 文件上传 ─────────────────────────────────────
+    function validateFile(file) {
+        var ext = '.' + file.name.split('.').pop().toLowerCase();
+
+        if (!ALLOWED_EXTENSIONS.includes(ext)) {
+            showError('不支持的视频格式: ' + ext + '。支持的格式: ' + ALLOWED_EXTENSIONS.join(', '));
+            return false;
+        }
+
+        if (file.size > MAX_FILE_SIZE) {
+            showError('文件过大: ' + formatSize(file.size) + '。最大限制: 500MB');
+            return false;
+        }
+
+        return true;
+    }
+
+    function formatSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+    }
+
+    function showError(message) {
+        uploadError.textContent = message;
+        uploadError.classList.add('active');
+        uploadSuccess.classList.remove('active');
+        setTimeout(function() {
+            uploadError.classList.remove('active');
+        }, 5000);
+    }
+
+    function showSuccess(message) {
+        uploadSuccess.textContent = message;
+        uploadSuccess.classList.add('active');
+        uploadError.classList.remove('active');
+        setTimeout(function() {
+            uploadSuccess.classList.remove('active');
+        }, 5000);
+    }
+
+    function uploadFile(file) {
+        if (!validateFile(file)) return;
+
+        var formData = new FormData();
+        formData.append('video', file);
+
+        var xhr = new XMLHttpRequest();
+
+        uploadProgress.classList.add('active');
+        progressFilename.textContent = file.name;
+        progressPercent.textContent = '0%';
+        progressFill.style.width = '0%';
+        progressStatus.textContent = '上传中...';
+        startAnalysisBtn.disabled = true;
+
+        xhr.upload.addEventListener('progress', function(e) {
+            if (e.lengthComputable) {
+                var percent = Math.round((e.loaded / e.total) * 100);
+                progressPercent.textContent = percent + '%';
+                progressFill.style.width = percent + '%';
+                progressStatus.textContent = '上传中... ' + formatSize(e.loaded) + ' / ' + formatSize(e.total);
+            }
+        });
+
+        xhr.addEventListener('load', function() {
+            if (xhr.status === 200) {
+                try {
+                    var response = JSON.parse(xhr.responseText);
+                    currentTaskId = response.task_id;
+                    progressStatus.textContent = '上传完成!';
+                    progressPercent.textContent = '100%';
+                    progressFill.style.width = '100%';
+                    showSuccess('上传成功! 任务ID: ' + response.task_id);
+
+                    analysisSection.classList.add('active');
+                    startAnalysisBtn.disabled = false;
+
+                    // 自动开始分析
+                    setTimeout(function() {
+                        startAnalysis();
+                    }, 500);
+                } catch(e) {
+                    showError('服务器响应格式错误');
+                }
+            } else {
+                try {
+                    var error = JSON.parse(xhr.responseText);
+                    showError(error.error || '上传失败');
+                } catch(e) {
+                    showError('上传失败: ' + xhr.statusText);
+                }
+            }
+        });
+
+        xhr.addEventListener('error', function() {
+            showError('网络错误，请检查连接');
+        });
+
+        xhr.addEventListener('abort', function() {
+            showError('上传已取消');
+        });
+
+        xhr.open('POST', API_BASE + '/api/v1/upload');
+        xhr.send(formData);
+    }
+
+    function resetUpload() {
+        fileInput.value = '';
+        uploadProgress.classList.remove('active');
+        uploadError.classList.remove('active');
+        uploadSuccess.classList.remove('active');
+        analysisSection.classList.remove('active');
+        currentTaskId = null;
+
+        if (sseConnection) {
+            sseConnection.close();
+            sseConnection = null;
+        }
+
+        // 重置分析统计
+        document.getElementById('analysisFrames').textContent = '0';
+        document.getElementById('analysisDetections').textContent = '0';
+        document.getElementById('analysisAlerts').textContent = '0';
+        document.getElementById('analysisProgressPercent').textContent = '0%';
+        document.getElementById('analysisFill').style.width = '0%';
+        detectionList.innerHTML = '<div class="no-alerts" style="height: 80px;"><div>暂无检测结果</div></div>';
+    }
+
+    // ── 分析 ─────────────────────────────────────────
+    function startAnalysis() {
+        if (!currentTaskId) {
+            showError('没有任务ID，请先上传视频文件');
+            return;
+        }
+
+        startAnalysisBtn.disabled = true;
+        startAnalysisBtn.innerHTML = '<span class="spinner"></span> 分析中...';
+
+        fetch(API_BASE + '/api/v1/analyze/' + currentTaskId, {
+            method: 'POST'
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) {
+                showError(data.error);
+                startAnalysisBtn.disabled = false;
+                startAnalysisBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> 开始分析';
+                return;
+            }
+
+            // 连接 SSE 流
+            connectSSE(currentTaskId);
+        })
+        .catch(function(err) {
+            showError('启动分析失败: ' + err.message);
+            startAnalysisBtn.disabled = false;
+            startAnalysisBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> 开始分析';
+        });
+    }
+
+    function connectSSE(taskId) {
+        if (sseConnection) {
+            sseConnection.close();
+        }
+
+        var detectionCount = 0;
+        var alertCount = 0;
+        var noDetections = detectionList.querySelector('.no-alerts');
+
+        sseConnection = new EventSource(API_BASE + '/api/v1/analyze/' + taskId + '/stream');
+
+        sseConnection.addEventListener('meta', function(e) {
+            var data = JSON.parse(e.data);
+            document.getElementById('analysisProgressText').textContent =
+                '处理 ' + data.total_frames + ' 帧 (' + data.fps + ' FPS, ' + data.width + 'x' + data.height + ')';
+        });
+
+        sseConnection.addEventListener('frame', function(e) {
+            var data = JSON.parse(e.data);
+
+            // 更新进度
+            var progress = data.progress || 0;
+            document.getElementById('analysisProgressPercent').textContent = Math.round(progress) + '%';
+            document.getElementById('analysisFill').style.width = progress + '%';
+            document.getElementById('analysisFrames').textContent = data.frame_index || 0;
+
+            // 更新检测结果
+            if (data.detections && data.detections.length > 0) {
+                detectionCount += data.detections.length;
+                document.getElementById('analysisDetections').textContent = detectionCount;
+
+                // 隐藏"暂无检测"提示
+                if (noDetections) {
+                    noDetections.style.display = 'none';
+                }
+
+                // 添加检测项（使用 DOM API 避免 XSS）
+                data.detections.forEach(function(det) {
+                    var item = document.createElement('div');
+                    item.className = 'detection-item';
+
+                    var clsSpan = document.createElement('span');
+                    clsSpan.className = 'detection-class';
+                    clsSpan.textContent = det.class_name;
+                    item.appendChild(clsSpan);
+
+                    var confSpan = document.createElement('span');
+                    confSpan.className = 'detection-confidence';
+                    confSpan.textContent = (det.confidence * 100).toFixed(1) + '%';
+                    item.appendChild(confSpan);
+
+                    var timeSpan = document.createElement('span');
+                    timeSpan.className = 'detection-time';
+                    timeSpan.textContent = data.video_time + 's';
+                    item.appendChild(timeSpan);
+
+                    detectionList.insertBefore(item, detectionList.firstChild);
+                });
+
+                // 限制显示数量
+                while (detectionList.children.length > 50) {
+                    detectionList.removeChild(detectionList.lastChild);
+                }
+            }
+
+            // 更新告警
+            if (data.alerts && data.alerts.length > 0) {
+                alertCount += data.alerts.length;
+                document.getElementById('analysisAlerts').textContent = alertCount;
+
+                data.alerts.forEach(function(alert) {
+                    addAlert(alert);
+                });
+            }
+
+            // 更新帧图片
+            if (data.frame_index % 10 === 0) {
+                var frameImg = document.getElementById('streamImg');
+                frameImg.src = API_BASE + '/api/v1/analyze/' + taskId + '/frame?' + Date.now();
+                frameImg.style.display = 'block';
+                placeholder.style.display = 'none';
+            }
+        });
+
+        sseConnection.addEventListener('complete', function(e) {
+            var data = JSON.parse(e.data);
+
+            document.getElementById('analysisProgressPercent').textContent = '100%';
+            document.getElementById('analysisFill').style.width = '100%';
+            document.getElementById('analysisProgressText').textContent = '分析完成!';
+
+            startAnalysisBtn.disabled = false;
+            startAnalysisBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> 开始分析';
+
+            showSuccess('分析完成! 共发现 ' + data.total_detections + ' 个检测目标，' + data.total_alerts + ' 条告警');
+
+            sseConnection.close();
+            sseConnection = null;
+        });
+
+        sseConnection.addEventListener('error', function(e) {
+            try {
+                var data = JSON.parse(e.data);
+                showError('分析错误: ' + data.message);
+            } catch(err) {
+                showError('分析连接出错');
+            }
+
+            startAnalysisBtn.disabled = false;
+            startAnalysisBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> 开始分析';
+
+            sseConnection.close();
+            sseConnection = null;
+        });
+
+        sseConnection.addEventListener('status', function(e) {
+            var data = JSON.parse(e.data);
+            if (data.status === 'processing') {
+                document.getElementById('analysisProgressText').textContent = '处理帧中...';
+            }
+        });
+    }
+
+    // ── 拖拽上传 ────────────────────────────────────
+    dropzone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        dropzone.classList.add('dragover');
+    });
+
+    dropzone.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        dropzone.classList.remove('dragover');
+    });
+
+    dropzone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        dropzone.classList.remove('dragover');
+
+        var files = e.dataTransfer.files;
+        if (files.length > 0) {
+            uploadFile(files[0]);
+        }
+    });
+
+    fileInput.addEventListener('change', function(e) {
+        if (e.target.files.length > 0) {
+            uploadFile(e.target.files[0]);
+        }
+    });
+
+    // ── 初始化 ───────────────────────────────────────
+    startStream();
+    startStats();
+    connectWS();
+})();
+</script>
+</body>
+</html>

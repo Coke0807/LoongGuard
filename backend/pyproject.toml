@@ -1,0 +1,69 @@
+# ─────────────────────────────────────────────────────────────
+# LoongGuard - Python 项目元数据 (PEP 621)
+# 基于 LoongArch 的幼儿园 AI 安全卫士
+# ─────────────────────────────────────────────────────────────
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "loongguard"
+version = "0.1.0"
+description = "基于 LoongArch 的幼儿园端侧 AI 安全监护系统"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "LoongGuard Team"},
+]
+
+# ── 核心依赖（同步自 requirements.txt） ────────────────────
+dependencies = [
+    # 目标检测
+    "ultralytics>=8.4.0",
+    # 深度学习框架（训练用）
+    "torch>=2.0.0",
+    # 推理引擎
+    "onnxruntime>=1.16.0",
+    # 计算机视觉
+    "opencv-python>=4.8.0",
+    # 数据处理
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    # 国密 SM4 加密
+    "gmssl>=3.2.0",
+    # 后端 API 服务
+    "aiohttp>=3.9.0",
+    # SSH 远程同步
+    "paramiko>=3.3.0",
+    # 可观测性（新增）
+    "prometheus-client>=0.19.0",
+    "python-json-logger>=2.0.0",
+]
+
+# ── 可选依赖组 ───────────────────────────────────────────────
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+]
+# 龙芯 LG200 定制版 onnxruntime-gpu，需手动下载 wheel 安装
+gpu = [
+    "onnxruntime-gpu>=1.16.0",
+]
+
+# ── CLI 入口 ─────────────────────────────────────────────────
+[project.scripts]
+loongguard = "src.pipeline:main"
+
+# ── Pytest 配置 ──────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short"
+
+# ── Setuptools 包发现 ────────────────────────────────────────
+[tool.setuptools.packages.find]
+include = ["src*", "config*"]
