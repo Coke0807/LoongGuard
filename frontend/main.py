@@ -49,6 +49,12 @@ class KindergartenGuardMain(QMainWindow):
          # 新建语音播放器实例
         self.voice_player = VoicePlayer()
 
+        # 语音唤醒开关状态（最小版本）
+        # 设计动机（预留接口）：唤醒词引擎（如 openWakeWord）需额外模型，
+        # 且 Windows 与 Loongnix 部署差异大。此处先提供状态切换 + 预留
+        # _handle_voice_wake 钩子，待团队语音模块开发完毕后接入。
+        self.voice_wake_enabled = False
+
         # 设备状态变量【麦克风状态】
         self.mic_ok = False
         self.camera_ok = False
@@ -232,34 +238,40 @@ class KindergartenGuardMain(QMainWindow):
    # ===================== USB麦克风检测 =====================
     def check_usb_microphone(self):
         mic_detected = False
-        try:
-            ret = subprocess.run(
-                ["arecord", "-l"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=2
-            )
-            output = ret.stdout + ret.stderr
-            if "USB" in output and ("card" in output or "mic" in output or "input" in output):
-                mic_detected = True
-            else:
-                ret2 = subprocess.run(
-                    ["lsusb"],
+        # 跨平台兼容：arecord/lsusb 为 Linux 专属命令（Loongnix 板端可用）。
+        # Windows 开发测试环境无此命令，直接判定无麦克风，
+        # 避免每 2 秒轮询抛一次 FileNotFoundError 刷屏日志。
+        if sys.platform != "linux":
+            mic_detected = False
+        else:
+            try:
+                ret = subprocess.run(
+                    ["arecord", "-l"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
                     timeout=2
                 )
-                usb_out = ret2.stdout
-                mic_keywords = ["hk mic", "microphone", "audio", "sound", "headset"]
-                for kw in mic_keywords:
-                    if kw.lower() in usb_out.lower():
-                        mic_detected = True
-                        break
-        except Exception as e:
-            write_log("MIC", f"麦克风检测命令执行异常: {str(e)}")
-            mic_detected = False
+                output = ret.stdout + ret.stderr
+                if "USB" in output and ("card" in output or "mic" in output or "input" in output):
+                    mic_detected = True
+                else:
+                    ret2 = subprocess.run(
+                        ["lsusb"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        timeout=2
+                    )
+                    usb_out = ret2.stdout
+                    mic_keywords = ["hk mic", "microphone", "audio", "sound", "headset"]
+                    for kw in mic_keywords:
+                        if kw.lower() in usb_out.lower():
+                            mic_detected = True
+                            break
+            except Exception as e:
+                write_log("MIC", f"麦克风检测命令执行异常: {str(e)}")
+                mic_detected = False
 
         if mic_detected != self.mic_ok:
             old_mic_state = self.mic_ok
@@ -483,6 +495,23 @@ class KindergartenGuardMain(QMainWindow):
             self.voice_player.voice_sleep()
         elif "公共巡查模式" == mode_text:
             self.voice_player.voice_patrol()
+
+    def toggle_voice_wake(self):
+        """切换语音唤醒开关（最小版本：状态切换 + 预留接口）"""
+        self.voice_wake_enabled = not self.voice_wake_enabled
+        write_log("INFO", f"语音唤醒 {'已开启' if self.voice_wake_enabled else '已关闭'}")
+        # 预留接入点：唤醒词引擎就绪后在此启动/停止后台监听线程
+        self._handle_voice_wake(self.voice_wake_enabled)
+
+    def _handle_voice_wake(self, enabled: bool):
+        """语音唤醒预留接口（待团队语音模块接入）
+
+        Args:
+            enabled: True=开启唤醒监听，False=关闭。
+        当前为最小版本桩，仅记录状态；接入唤醒词引擎时在此
+        启动/停止对应的后台线程或 WebSocket 监听。
+        """
+        pass
 
     def draw_patrol_icon(self, size: QSize, color=QColor("#ffffff")):
         pix = QPixmap(size.width(), size.height())
@@ -922,6 +951,9 @@ class KindergartenGuardMain(QMainWindow):
                 self.btn_clear_warn.clicked.connect(self.clear_all_warn)
             if cfg["text"] == "模式切换":
                 btn.clicked.connect(self.switch_mode)
+            if cfg["text"] == "语音唤醒":
+                self.btn_voice_wake = btn
+                btn.clicked.connect(self.toggle_voice_wake)
             if cfg["text"] == "手动抓拍":
                 self.btn_capture = btn
                 self.btn_capture.clicked.connect(self.manual_capture)
@@ -937,7 +969,8 @@ class KindergartenGuardMain(QMainWindow):
         # AI线程温湿度信号不再使用，注释兼容
         self.ai_thread.signal_temp_humi_gas.connect(self.update_env_data)
         self.ai_thread.signal_device_online.connect(self.update_device_count)
-        #self.ai_thread.signal_warn.connect(self.show_warn_dialog)
+        # 订阅后端 /ws/alerts，收到真实告警后显示
+        self.ai_thread.signal_warn.connect(self.show_warn_dialog)
         self.ai_thread.signal_sensor_status.connect(self.set_sensor_status)
 
     def refresh_time(self):

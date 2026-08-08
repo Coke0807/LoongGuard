@@ -68,6 +68,14 @@ class VideoHub:
         self._latest_web_jpeg: Optional[bytes] = None
         self._lock = __import__("threading").Lock()
 
+        # 最新推理叠加数据（由独立推理线程 set_overlay 更新，显示线程读取）
+        # 设计动机（帧率解耦）：显示帧率不应受推理耗时限制。
+        # 推理线程持续更新最新检测框/运动区域/关键点，push_frame 只负责
+        # 把"最新结果"叠加到当前待显示帧上并编码，从而显示可达摄像头原生帧率。
+        self._latest_boxes: list[BoundingBox] = []
+        self._latest_motion: list = []
+        self._latest_keypoints: Optional[np.ndarray] = None
+
         # 实时统计
         self._frame_count: int = 0
         self._alert_count: int = 0
@@ -75,29 +83,47 @@ class VideoHub:
         self._start_time: float = time.time()
         self._frame_times: deque[float] = deque(maxlen=60)
 
-    def push_frame(
+    def set_overlay(
         self,
-        frame_rgb: np.ndarray,
         boxes: Optional[list[BoundingBox]] = None,
         motion_regions: Optional[list] = None,
         keypoints: Optional[np.ndarray] = None,
     ) -> None:
         """
+        更新最新推理叠加数据（推理线程调用，线程安全）
+
+        与 push_frame 解耦：推理线程在后台持续更新这些结果，
+        显示线程 push_frame 时直接读取最新值叠加，互不阻塞。
+        """
+        with self._lock:
+            self._latest_boxes = list(boxes) if boxes else []
+            self._latest_motion = list(motion_regions) if motion_regions else []
+            self._latest_keypoints = keypoints
+
+    def push_frame(
+        self,
+        frame_rgb: np.ndarray,
+    ) -> None:
+        """
         推送一帧到视频流缓冲
 
-        Pipeline 主循环每处理完一帧调用一次。
-        在帧上绘制检测框、运动区域后编码为 JPEG。
+        采集线程高频调用（可达摄像头原生帧率），仅负责把推理线程
+        更新的最新叠加数据（set_overlay 写入）绘制到当前帧并编码。
+        推理与显示解耦，帧率不受推理耗时限制。
 
         Args:
             frame_rgb: RGB 格式帧数据 (H, W, 3)
-            boxes: 检测框列表
-            motion_regions: 运动区域列表
-            keypoints: MoveNet 关键点 (17, 3)
         """
         try:
             import cv2
 
             display = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+
+            # 读取最新推理叠加数据（线程安全快照）
+            with self._lock:
+                boxes = list(self._latest_boxes)
+                motion_regions = list(self._latest_motion)
+                keypoints = self._latest_keypoints
 
             # 绘制运动区域
             if motion_regions:

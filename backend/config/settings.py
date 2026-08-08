@@ -60,6 +60,11 @@ class DetectionConfig:
     backend: str = "onnxruntime"
     # OpenCL 设备索引（LG200）
     opencl_device_id: int = 0
+    # 静止危险品全帧扫描间隔（秒）
+    # 设计动机：运动触发的 ROI 检测无法捕捉静止危险品（如放在桌面的剪刀）。
+    # 每间隔该时长对整帧执行一次 YOLO 检测，作为"静止检测"兜底。
+    # 在独立推理线程中执行，不阻塞视频显示帧率。
+    full_scan_interval_sec: float = 1.5
     # 检测类别（危险物品）
     classes: list[str] = field(default_factory=lambda: [
         "magnetic_bead",      # 磁力珠
@@ -121,6 +126,48 @@ class MotionConfig:
     blur_kernel_size: int = 5
     # 形态学膨胀核大小（填补空洞）
     dilate_kernel_size: int = 7
+
+
+@dataclass
+class FaceConfig:
+    """
+    人脸检测配置（跨平台预留）
+
+    睡姿监测依赖"Person bbox 内无 Face -> 异常睡姿"判定。
+    板端人脸模型权重尚未补充，当前默认 backend="dummy" 使用桩实现，
+    保证 Windows 开发与 MVP 链路不阻塞。接入真实模型时：
+        1. 将 ONNX 权重放入 backend/models/
+        2. 设置 backend="onnx" 与 model_path
+    """
+
+    # 检测后端：dummy（桩，默认）/ onnx（真实模型，板端接入）
+    backend: str = "dummy"
+    # ONNX 人脸模型路径
+    model_path: str = str(_DEFAULT_MODEL_DIR / "face_detector.onnx")
+    # 置信度阈值
+    conf_threshold: float = 0.5
+    # 是否启用睡姿（人脸可见性）监测；关闭时 pipeline 不执行该逻辑
+    enabled: bool = False
+    # 定义 YOLO 检测结果中"人"类别名（用于 Person+Face 组合判定）
+    person_class: str = "person"
+
+
+@dataclass
+class MediaConfig:
+    """
+    媒体能力配置（语音 + 流媒体，跨平台预留）
+
+    - audio_backend: command（系统命令）/ dummy（桩）
+    - stream_publisher: mjpeg（开发/局域网桩）/ webrtc（板端预留）
+    - webrtc_signal_port: 小程序 WebRTC 信令端口
+    """
+
+    # 音频后端
+    audio_backend: str = "command"
+    # 流媒体发布器类型
+    stream_publisher: str = "mjpeg"
+    # WebRTC 信令端口（stream_publisher="webrtc" 时生效）
+    webrtc_signal_port: int = 8888
 
 
 @dataclass
@@ -241,6 +288,8 @@ class AppConfig:
     pose: PoseConfig = field(default_factory=PoseConfig)
     roi: ROIConfig = field(default_factory=ROIConfig)
     motion: MotionConfig = field(default_factory=MotionConfig)
+    face: FaceConfig = field(default_factory=FaceConfig)
+    media: MediaConfig = field(default_factory=MediaConfig)
     alarm: AlarmConfig = field(default_factory=AlarmConfig)
     crypto: CryptoConfig = field(default_factory=CryptoConfig)
     api: APIConfig = field(default_factory=APIConfig)

@@ -13,7 +13,7 @@ Windows 可视化测试 -- 实时展示摄像头画面 + 检测框 + 告警信�
     - YOLO26 检测框叠加显示（类别 + 置信度）
     - MoveNet 关键点叠加显示
     - 帧率 / 检测数 / 运动状态 HUD 信息
-    - SM4 告警加密计数
+    - 告警计数（模拟，有检测结果时递增）
 """
 
 from __future__ import annotations
@@ -30,15 +30,11 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import load_config, AppConfig
+from config import load_config
 from src.camera.v4l2_capture import V4L2Capture
 from src.motion.frame_diff import FrameDiffDetector
 from src.detection.yolo26_nano import YOLO26Nano
 from src.pose.movenet import MoveNetLightning
-from src.roi.roi_scheduler import ROIScheduler
-from src.alarm.gpio_trigger import GPIOAlarmTrigger
-from src.crypto.sm4_logger import SM4Logger
-from src.utils.schema import AlertLog, AlertSeverity
 
 
 # ── 颜色常量 ──────────────────────────────────────────────────
@@ -52,13 +48,6 @@ _COLORS = {
     "glass_shard":     (255, 0, 0),      # 蓝
     "wire":            (255, 255, 0),    # 青
     "small_toy_part":  (255, 0, 255),    # 紫
-}
-
-_SEVERITY_COLORS = {
-    AlertSeverity.LOW:      (200, 200, 200),
-    AlertSeverity.MEDIUM:   (0, 200, 200),
-    AlertSeverity.HIGH:     (0, 165, 255),
-    AlertSeverity.CRITICAL: (0, 0, 255),
 }
 
 # MoveNet 17 关键点连线（骨骼图）

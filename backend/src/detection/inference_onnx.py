@@ -177,7 +177,9 @@ class LoongONNXPredictor:
             FileNotFoundError: 图像文件路径不存在
             ValueError: 图像为空
         """
-        t_total_start = time.monotonic()
+        # 用 perf_counter 而非 monotonic：dummy/量化模型各阶段耗时常在 1ms 以下，
+        # monotonic 在部分平台分辨率约 1ms，会把 sub-ms 耗时截断为 0，导致计时失真
+        t_total_start = time.perf_counter()
 
         # 支持文件路径输入
         if isinstance(image, str):
@@ -190,23 +192,23 @@ class LoongONNXPredictor:
         original_shape = image.shape[:2]
 
         # 前处理
-        t0 = time.monotonic()
+        t0 = time.perf_counter()
         batch, scale, (pad_h, pad_w) = self.preprocess(image)
-        preprocess_time = time.monotonic() - t0
+        preprocess_time = time.perf_counter() - t0
 
         # ONNX 推理
-        t0 = time.monotonic()
+        t0 = time.perf_counter()
         outputs = self.session.run(None, {self.input_name: batch})
-        inference_time = time.monotonic() - t0
+        inference_time = time.perf_counter() - t0
 
         # 后处理：置信度过滤 + 坐标反变换
-        t0 = time.monotonic()
+        t0 = time.perf_counter()
         detections = self.postprocess(
             outputs, original_shape, scale, (pad_h, pad_w)
         )
-        postprocess_time = time.monotonic() - t0
+        postprocess_time = time.perf_counter() - t0
 
-        total_time = time.monotonic() - t_total_start
+        total_time = time.perf_counter() - t_total_start
 
         return InferenceResult(
             original_shape=original_shape,

@@ -1,5 +1,6 @@
 import threading
 import subprocess
+import shutil
 import os
 from utils import write_log
 
@@ -8,13 +9,24 @@ class VoicePlayer:
     VOICE_DIR = "./voice"
     # 超时时间
     PLAY_TIMEOUT = 8
+    # 播放器检测结果（跨平台缓存）
+    _FFPLAY_AVAILABLE = shutil.which("ffplay") is not None
 
     def play_audio(self, audio_filename: str):
-        """兼容 mp3 / m4a 通用异步播放"""
+        """兼容 mp3 / m4a 通用异步播放（跨平台降级）"""
         def play_task():
             audio_path = os.path.join(self.VOICE_DIR, audio_filename)
             if not os.path.exists(audio_path):
                 write_log("VOICE", f"音频文件不存在：{audio_filename}")
+                return
+
+            # 跨平台降级策略：
+            #   Loongnix 板端 Loongnix_v25 预装 ffplay（来自 ffmpeg）。
+            #   Windows 开发测试环境可能未安装 ffplay，此时跳过播放并记日志，
+            #   避免 FileNotFoundError 刷屏影响其他功能。待需要时可用
+            #   pygame 或调用系统媒体播放器替代。
+            if not self._FFPLAY_AVAILABLE:
+                write_log("VOICE", f"ffplay 不可用，跳过语音播报：{audio_filename}")
                 return
 
             cmd = [

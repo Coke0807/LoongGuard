@@ -3,7 +3,7 @@
         "device": "0",
         "width": 640,
         "height": 480,
-        "fps": 30,
+        "fps": 60,
         "pixel_format": "MJPG"
     },
     "detection": {
@@ -11,7 +11,8 @@
         "input_size": 640,
         "conf_threshold": 0.30,
         "quantized": false,
-        "backend": "onnxruntime"
+        "backend": "onnxruntime",
+        "full_scan_interval_sec": 1.5
     },
     "pose": {
         "input_size": 192,
@@ -32,6 +33,18 @@
         "motion_ratio_threshold": 0.005,
         "blur_kernel_size": 5,
         "dilate_kernel_size": 7
+    },
+    "face": {
+        "backend": "dummy",
+        "model_path": "models/face_detector.onnx",
+        "conf_threshold": 0.5,
+        "enabled": false,
+        "person_class": "person"
+    },
+    "media": {
+        "audio_backend": "command",
+        "stream_publisher": "mjpeg",
+        "webrtc_signal_port": 8888
     },
     "alarm": {
         "buzzer_pin": 18,
