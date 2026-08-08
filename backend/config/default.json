@@ -3,7 +3,7 @@
         "device": "0",
         "width": 640,
         "height": 480,
-        "fps": 60,
+        "fps": 30,
         "pixel_format": "MJPG"
     },
     "detection": {
@@ -11,8 +11,7 @@
         "input_size": 640,
         "conf_threshold": 0.30,
         "quantized": false,
-        "backend": "onnxruntime",
-        "full_scan_interval_sec": 1.5
+        "backend": "onnxruntime"
     },
     "pose": {
         "input_size": 192,

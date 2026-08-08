@@ -55,6 +55,19 @@ CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
 CREATE INDEX IF NOT EXISTS idx_alerts_type ON alerts(alert_type);
 CREATE INDEX IF NOT EXISTS idx_alerts_ack ON alerts(acknowledged);
 CREATE INDEX IF NOT EXISTS idx_detections_alert ON detections(alert_id);
+
+-- 敏感接口访问审计（摄像头 /stream、告警 WS/REST 等涉及未成年人隐私）
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    method TEXT NOT NULL,
+    path TEXT NOT NULL,
+    remote TEXT DEFAULT '',
+    user_agent TEXT DEFAULT '',
+    username TEXT DEFAULT '',
+    status INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
 """
 
 
@@ -106,6 +119,30 @@ class AlertDatabase:
             self._conn.close()
             self._conn = None
 
+    def backup(self, backup_path: str) -> bool:
+        """
+        热备份数据库到指定路径（WAL 模式下安全，无需停机）。
+
+        设计动机：
+            SQLite 单机无备份策略，设备故障/误删会导致告警记录丢失。
+            利用 sqlite3.Connection.backup() 在不中断服务的前提下生成
+            一致性快照，供定期任务调用。
+        """
+        if self._conn is None:
+            return False
+        try:
+            Path(backup_path).parent.mkdir(parents=True, exist_ok=True)
+            dest = sqlite3.connect(backup_path)
+            try:
+                self._conn.backup(dest)
+            finally:
+                dest.close()
+            logger.info("数据库已备份: %s", backup_path)
+            return True
+        except Exception:
+            logger.exception("数据库备份失败: %s", backup_path)
+            return False
+
     # ── 写入 ──────────────────────────────────────────────────
     def insert_alert(self, alert: AlertLog) -> None:
         """
@@ -150,6 +187,38 @@ class AlertDatabase:
                 ],
             )
         self._conn.commit()
+
+    # ── 审计 ──────────────────────────────────────────────────
+    def insert_audit(self, entry: dict) -> None:
+        """
+        记录一条敏感接口访问审计。
+
+        涉及未成年人隐私的接口（/stream、/ws/alerts、/api/v1/alerts 等）
+        每次访问（含失败尝试）都应留痕，满足合规审计要求。
+
+        Args:
+            entry: 含 timestamp/method/path/remote/user_agent 等字段的 dict
+        """
+        if self._conn is None:
+            return
+        try:
+            self._conn.execute(
+                """INSERT INTO audit_log
+                   (timestamp, method, path, remote, user_agent, username, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    entry.get("timestamp", ""),
+                    entry.get("method", ""),
+                    entry.get("path", ""),
+                    entry.get("remote", ""),
+                    entry.get("user_agent", ""),
+                    entry.get("username", ""),
+                    int(entry.get("status", 0)),
+                ),
+            )
+            self._conn.commit()
+        except Exception:
+            logger.exception("Failed to insert audit log")
 
     # ── 查询 ──────────────────────────────────────────────────
     def query_alerts(
@@ -221,6 +290,22 @@ class AlertDatabase:
         if row is None:
             return None
         return self._row_to_alert_dict(row)
+
+    def query_audit(self, page: int = 1, page_size: int = 20) -> dict:
+        """分页查询审计日志，返回 {"total", "page", "page_size", "data"}。"""
+        if self._conn is None:
+            return {"total": 0, "page": page, "page_size": page_size, "data": []}
+
+        total = self._conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+        offset = (page - 1) * page_size
+        rows = self._conn.execute(
+            """SELECT timestamp, method, path, remote, user_agent, username, status
+               FROM audit_log ORDER BY timestamp DESC LIMIT ? OFFSET ?""",
+            (page_size, offset),
+        ).fetchall()
+
+        data = [dict(r) for r in rows]
+        return {"total": total, "page": page, "page_size": page_size, "data": data}
 
     # ── 更新 ──────────────────────────────────────────────────
     def ack_alert(self, alert_id: str) -> bool:

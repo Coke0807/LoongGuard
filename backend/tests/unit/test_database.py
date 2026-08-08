@@ -357,3 +357,96 @@ class TestAlertDatabase:
         )
         assert result["total"] == 1
         assert result["data"][0]["alert_id"] == "combo1"
+
+
+# ── 新增：热备份 & 审计日志测试（覆盖可靠性/合规项）─────────
+
+
+class TestDatabaseBackup:
+
+    def test_backup_creates_file(self, db, sample_alert, tmp_path):
+        """backup() 应生成可读取的一致性快照文件"""
+        db.insert_alert(sample_alert)
+        backup_path = str(tmp_path / "backup" / "db_backup.db")
+
+        assert db.backup(backup_path) is True
+
+        # 独立连接打开备份文件，验证数据完整
+        import sqlite3
+        conn = sqlite3.connect(backup_path)
+        try:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM alerts WHERE alert_id=?",
+                (sample_alert.alert_id,),
+            ).fetchone()[0]
+            assert count == 1
+        finally:
+            conn.close()
+
+    def test_backup_preserves_all_alerts(self, db, tmp_path):
+        """备份应包含全部告警数据"""
+        for i in range(10):
+            db.insert_alert(AlertLog(
+                alert_id=f"bk{i}", timestamp=f"2026-06-25T1{i}:00:00Z",
+                alert_type=AlertType.DANGEROUS_OBJECT, severity=AlertSeverity.HIGH,
+            ))
+
+        backup_path = str(tmp_path / "backup.db")
+        assert db.backup(backup_path) is True
+
+        import sqlite3
+        conn = sqlite3.connect(backup_path)
+        try:
+            count = conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
+            assert count == 10
+        finally:
+            conn.close()
+
+    def test_backup_returns_false_when_closed(self, db, tmp_path):
+        """数据库未初始化（连接关闭）时 backup 应返回 False"""
+        db.close()
+        assert db.backup(str(tmp_path / "closed.db")) is False
+
+
+class TestAuditLog:
+
+    def test_insert_and_query_audit(self, db):
+        """insert_audit + query_audit 往返"""
+        db.insert_audit({
+            "timestamp": "2026-06-25T10:00:00+00:00",
+            "method": "GET",
+            "path": "/stream",
+            "remote": "127.0.0.1",
+            "user_agent": "pytest",
+            "username": "admin",
+            "status": 200,
+        })
+
+        result = db.query_audit(page=1, page_size=10)
+        assert result["total"] == 1
+        assert result["data"][0]["path"] == "/stream"
+        assert result["data"][0]["method"] == "GET"
+        assert result["data"][0]["username"] == "admin"
+
+    def test_query_audit_empty(self, db):
+        """无审计记录时返回空列表"""
+        result = db.query_audit()
+        assert result["total"] == 0
+        assert result["data"] == []
+
+    def test_query_audit_pagination(self, db):
+        """审计日志分页"""
+        for i in range(5):
+            db.insert_audit({
+                "timestamp": f"2026-06-25T10:0{i}:00+00:00",
+                "method": "GET",
+                "path": f"/api/v1/alerts?p={i}",
+                "remote": "127.0.0.1",
+                "user_agent": "pytest",
+                "username": "",
+                "status": 200,
+            })
+
+        result = db.query_audit(page=1, page_size=2)
+        assert result["total"] == 5
+        assert len(result["data"]) == 2

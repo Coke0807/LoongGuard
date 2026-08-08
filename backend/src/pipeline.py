@@ -14,11 +14,11 @@ import logging
 import os
 import signal
 import sys
-import threading
 import time
+from datetime import datetime, timedelta
 from typing import Optional
 
-from config import AppConfig, load_config
+from config import AppConfig, load_config, validate_config
 from src.camera.v4l2_capture import V4L2Capture, Frame
 from src.camera.frame_buffer import FrameBuffer
 from src.detection.yolo26_nano import YOLO26Nano
@@ -34,6 +34,7 @@ from src.api.metrics import (
 )
 from src.db.database import AlertDatabase
 from src.alerts.dedup import AlertDeduplicator
+from src.alerts.notifier import AlertNotifier
 from src.face import create_face_detector
 from src.media import create_audio_backend, create_stream_publisher
 from src.utils.schema import AlertLog, AlertSeverity, AlertType
@@ -67,19 +68,6 @@ class Pipeline:
         self._frame_count: int = 0  # 总帧计数（用于周期性任务）
         self._fps_window: list[float] = []  # FPS 滑动窗口
 
-        # ── 推理与显示解耦（独立推理线程）───────────────────────
-        # 主循环（采集线程）只负责把帧推送到 VideoHub，保证显示帧率；
-        # 独立推理线程负责"运动检测 + 周期全帧扫描（静止检测）+ ROI + 姿态"，
-        # 通过 video_hub.set_overlay 更新叠加数据，二者在不同线程互不阻塞。
-        # 设计动机（静止检测）：运动触发的 ROI 检测永远捕捉不到静止危险品
-        # （如放在桌面的剪刀），因此推理线程还需按 full_scan_interval_sec
-        # 周期性对整帧执行一次 YOLO 检测，作为"静止检测"兜底。
-        self._latest_frame_lock = threading.Lock()
-        self._latest_frame: Optional[Frame] = None  # 最新帧槽（采集线程写入，推理线程读取）
-        self._infer_thread: Optional[threading.Thread] = None
-        self._alert_queue: Optional[asyncio.Queue] = None  # 推理线程 -> 事件循环的告警队列
-        self._alert_consumer_task: Optional[asyncio.Task] = None
-
         # ── 子模块实例化 ──────────────────────────────────────
         self._camera = V4L2Capture(config.camera)
         self._frame_buffer = FrameBuffer(
@@ -106,6 +94,12 @@ class Pipeline:
         self._dedup = AlertDeduplicator(config.dedup)
         self._retention_task: Optional[asyncio.Task] = None
         self._cleanup_task: Optional[asyncio.Task] = None
+
+        # ── 新增：外部告警通知（webhook，无人值守防漏报）──────
+        self._notifier = AlertNotifier(config.notify)
+
+        # ── 新增：数据库定期备份任务 ─────────────────────────
+        self._backup_task: Optional[asyncio.Task] = None
 
     async def start(self) -> None:
         """
@@ -152,23 +146,13 @@ class Pipeline:
             "Stream publisher ready: %s", self._config.media.stream_publisher
         )
 
+        # ── 新增：外部告警通知器启动 ─────────────────────────
+        await self._notifier.start()
+
         # 启动周期性清理任务
         self._retention_task = asyncio.create_task(self._retention_loop())
         self._cleanup_task = asyncio.create_task(self._db_cleanup_loop())
-
-        # 启动独立推理线程 + 告警消费者（推理与显示解耦）
-        # 设计动机：推理线程在后台以自身节奏处理最新帧，采集线程可达到
-        # 摄像头原生帧率推送显示，互不阻塞。告警通过队列跨线程投递到
-        # 事件循环侧消费（API 推送等异步操作仍在事件循环执行）。
-        self._alert_queue = asyncio.Queue()
-        self._alert_consumer_task = asyncio.create_task(self._consume_alerts())
-        self._infer_thread = threading.Thread(
-            target=self._infer_loop,
-            name="loongguard-inference",
-            daemon=True,
-        )
-        self._infer_thread.start()
-        logger.info("Inference thread started")
+        self._backup_task = asyncio.create_task(self._db_backup_loop())
 
         self._running = True
         logger.info("Pipeline started")
@@ -182,7 +166,7 @@ class Pipeline:
         self._running = False
 
         # 取消周期性任务
-        for task in (self._retention_task, self._cleanup_task):
+        for task in (self._retention_task, self._cleanup_task, self._backup_task):
             if task and not task.done():
                 task.cancel()
                 try:
@@ -190,23 +174,11 @@ class Pipeline:
                 except asyncio.CancelledError:
                     pass
 
-        # 停止独立推理线程（先置 running=False 使循环退出，再 join 等待）
-        if self._infer_thread is not None:
-            self._infer_thread.join(timeout=5)
-            self._infer_thread = None
-        # 取消告警消费者
-        if self._alert_consumer_task is not None:
-            self._alert_consumer_task.cancel()
-            try:
-                await self._alert_consumer_task
-            except asyncio.CancelledError:
-                pass
-            self._alert_consumer_task = None
-
         self._camera.close()
         self._frame_buffer.clear()
         self._alarm.cleanup()
         self._db.close()
+        await self._notifier.stop()
         await self._api.stop()
         logger.info("Pipeline stopped")
 
@@ -221,199 +193,172 @@ class Pipeline:
 
     async def run(self) -> None:
         """
-        采集主循环（与推理解耦）
+        主推理循环
 
-        单帧流程：
+        单帧处理流程：
             1. 采集一帧
-            2. 将最新帧写入共享帧槽（推理线程异步消费）
-            3. 推送该帧到 VideoHub（单参数，显示帧率不被推理阻塞）
-            4. 帧率控制，避免忙轮询
+            2. 帧差分运动检测 -> 运动区域
+            3. 有运动 -> Dynamic ROI 调度（二级检测）+ 姿态估计
+            4. 无运动 -> 仅推送原始帧到视频流（跳过推理节省算力）
+            5. 告警触发 -> 声光 + 加密日志 + API 推送
 
-        设计动机（修复接口不一致 + 帧率解耦）：
-            旧版在此循环内同步执行推理，显示帧率受推理耗时限制，
-            且 push_frame 使用已被废弃的多参数签名导致接口报错。
-            新版采集线程只负责推帧，推理在独立线程（_infer_loop）执行，
-            通过 video_hub.set_overlay 更新叠加数据，显示可达摄像头原生帧率。
+        性能优化：
+            - 帧率控制：空闲时 sleep 避免忙轮询浪费 CPU
+            - 灰度缓存：当前帧灰度仅计算一次，避免 motion + buffer 重复计算
+            - 无运动时跳过推理：节省 GPU/CPU 算力
         """
-        logger.info("Entering main capture loop")
+        logger.info("Entering main inference loop")
         frame_interval = 1.0 / max(self._config.camera.fps, 1)
 
         while self._running:
-            loop_start = time.monotonic()
-
             frame = self._camera.read()
             if frame is None:
                 await asyncio.sleep(0.01)
                 continue
 
-            # 将最新帧写入共享槽（加锁保护并释放旧帧）
-            # 推理线程在锁内 .copy() 取走数据副本，二者互斥，无竞态。
-            with self._latest_frame_lock:
-                old = self._latest_frame
-                self._latest_frame = frame
-                if old is not None:
-                    old.release()
+            loop_start = time.monotonic()
 
-            # 推送帧到视频流（单参数，仅负责显示，不阻塞推理）
-            if self._api.video_hub is not None:
-                self._api.video_hub.push_frame(frame.data)
+            try:
+                await self._process_frame(frame)
+            except Exception:
+                logger.exception("Error processing frame %d", frame.frame_id)
+            finally:
+                self._frame_buffer.push(frame)
 
             # 帧率控制：保证不超频，同时 yield 控制权给事件循环
             elapsed = time.monotonic() - loop_start
             sleep_time = max(0, frame_interval - elapsed)
             await asyncio.sleep(sleep_time)
 
-    def _infer_loop(self) -> None:
+    async def _process_frame(self, frame: Frame) -> None:
         """
-        独立推理线程主循环（推理与显示解耦）
+        处理单帧
 
-        每个循环从最新帧槽取一帧，执行：
-            1. 帧差分运动检测 -> 运动区域
-            2. 周期全帧扫描（静止检测）：按 full_scan_interval_sec 对整帧
-               执行一次 YOLO 检测，捕捉静止危险品（放在桌面的剪刀等）
-            3. 有运动 -> Dynamic ROI 二级检测 + 姿态估计
-            4. 通过 video_hub.set_overlay 更新叠加数据（显示线程读取）
-            5. 告警放入队列，由事件循环侧 _consume_alerts 处理
+        性能优化策略：
+            - 灰度转换仅计算一次（当前帧），避免帧缓冲模块重复计算
+            - 帧推送到 VideoHub 仅在此处执行一次，移除 run() 中的重复调用
+            - 无运动时仅推送原始帧，跳过所有推理
+            - 姿态估计仅在有目标检测结果时执行（避免无目标时的无效推理）
 
-        设计动机：
-            - 推理线程以自身节奏处理"最新帧"，采集线程不受限，显示帧率
-              可达摄像头原生帧率；推理耗时只影响检测结果的刷新频率。
-            - 周期全帧扫描是"静止检测"的核心：运动触发无法捕捉静止物品。
+        关键约束（修复 #1）：无论处理过程中是否发生异常，都必须在 finally
+        块中调用 push_frame，确保前端 MJPEG 视频流不中断。
         """
         import numpy as np
 
-        prev_gray: Optional[np.ndarray] = None
-        last_full_scan: float = 0.0
-        full_scan_interval = max(
-            self._config.detection.full_scan_interval_sec, 0.25
-        )
+        # 计算当前帧灰度（仅一次，供运动检测使用）
+        current_gray = np.dot(
+            frame.data[..., :3], [0.299, 0.587, 0.114]
+        ).astype(np.uint8)
+        prev_gray = self._frame_buffer.get_prev_gray()
 
-        while self._running:
-            try:
-                # 从共享槽取最新帧数据副本（加锁，避免与采集线程竞态）
-                with self._latest_frame_lock:
-                    cur = self._latest_frame
-                    data = cur.data.copy() if cur is not None else None
-                if data is None:
-                    time.sleep(0.01)
-                    continue
+        # 帧差分运动检测
+        motion_regions: list = []
+        alerts: list[AlertLog] = []
+        det_boxes: list = []
 
-                now = time.monotonic()
+        try:
+            motion_regions = self._motion.detect(current_gray, prev_gray)
+            self._last_motion_regions = motion_regions
 
-                # 帧差运动检测（prev_gray 由本线程自维护）
-                current_gray = np.dot(
-                    data[..., :3], [0.299, 0.587, 0.114]
-                ).astype(np.uint8)
-                motion_regions = self._motion.detect(current_gray, prev_gray)
-                prev_gray = current_gray
-                self._last_motion_regions = motion_regions
+            # 指标：帧计数
+            FRAME_COUNT.inc()
+            self._frame_count += 1
 
-                # 指标：帧计数
-                FRAME_COUNT.inc()
-                self._frame_count += 1
+            if motion_regions:
+                # 自适应跳帧：大面积运动（如场景切换）时跳过推理
+                # 设计动机：当运动覆盖超过 80% 画面时，通常是场景切换或摄像头抖动，
+                # 此时 YOLO 推理效果差且耗时。跳过推理帧，仅在低运动帧上执行检测。
+                max_ratio = max(r.motion_ratio for r in motion_regions)
+                if max_ratio > 0.80:
+                    self._frame_skip_counter += 1
+                    if self._frame_skip_counter <= 2:
+                        # 跳过推理，仅推送原始帧
+                        self._last_det_boxes = []
+                        return
+                else:
+                    self._frame_skip_counter = 0
 
-                det_boxes: list = []
-                alerts: list[AlertLog] = []
-
-                # 周期全帧扫描（静止检测）
-                # 设计动机：运动触发的 ROI 检测无法捕捉静止危险品。
-                # 每间隔 full_scan_interval 秒对整帧执行一次 YOLO 检测，
-                # 作为"静止检测"兜底，无论是否有运动都会执行。
-                if now - last_full_scan >= full_scan_interval:
-                    last_full_scan = now
-                    try:
-                        full_boxes = self._detector.infer(data)
-                        det_boxes.extend(full_boxes)
-                    except Exception:
-                        logger.exception("Full-frame scan inference failed")
-
-                # 运动触发 Dynamic ROI + 姿态
-                if motion_regions:
-                    # 自适应跳帧：大面积运动（场景切换/抖动）时跳过 ROI 推理
-                    max_ratio = max(r.motion_ratio for r in motion_regions)
-                    if max_ratio <= 0.80:
-                        try:
-                            roi_alerts = self._roi_scheduler.process(
-                                data, motion_regions
-                            )
-                        except Exception:
-                            logger.exception("ROI scheduling failed")
-                            roi_alerts = []
-                        for alert in roi_alerts:
-                            alerts.append(alert)
-                            det_boxes.extend(alert.detections)
-
-                        # 姿态估计：有运动主体且到达推理节流间隔时执行
-                        # 设计动机：俯卧检测与危险物品检测是两个独立安全功能，
-                        # 不应相互依赖。有运动即可能有人活动，触发俯卧检测。
-                        if (
-                            self._pose.is_available()
-                            and self._pose.should_run(self._frame_count)
-                        ):
-                            try:
-                                pose_alerts = self._pose.detect_prone(data)
-                                alerts.extend(pose_alerts)
-                            except Exception:
-                                logger.exception("Pose detection raised unexpectedly")
-                            finally:
-                                self._pose.mark_ran(self._frame_count)
-
-                        # 睡姿（人脸可见性）监测：仅当显式启用时
-                        if (
-                            self._config.face.enabled
-                            and self._face.is_available()
-                        ):
-                            sleep_alerts = self._check_sleep_posture(data)
-                            alerts.extend(sleep_alerts)
-
-                self._last_det_boxes = det_boxes
-
-                # 更新视频叠加数据（显示线程 push_frame 读取，线程安全）
-                if self._api.video_hub is not None:
-                    self._api.video_hub.set_overlay(
-                        boxes=det_boxes,
-                        motion_regions=motion_regions,
-                    )
-
-                # 指标：检测结果分类计数
-                for box in det_boxes:
-                    DETECTION_COUNT.labels(class_name=box.class_name).inc()
-
-                # 指标：FPS 滑动窗口（每 30 帧更新一次）
-                self._fps_window.append(now)
-                self._fps_window = [
-                    t for t in self._fps_window if now - t < 1.0
-                ]
-                if self._frame_count % 30 == 0:
-                    PIPELINE_FPS.set(len(self._fps_window))
-
-                # 周期性去重清理（每 100 帧）
-                if self._frame_count % 100 == 0:
-                    self._dedup.cleanup_expired()
-
-                # 告警投递到事件循环侧队列（API 推送等异步工作由消费者处理）
+                # Dynamic ROI 调度（含二级检测）
+                alerts = self._roi_scheduler.process(
+                    frame.data, motion_regions
+                )
                 for alert in alerts:
-                    if self._alert_queue is not None:
-                        self._alert_queue.put_nowait(alert)
+                    det_boxes.extend(alert.detections)
 
-            except Exception:
-                logger.exception("Inference thread loop error")
-                time.sleep(0.01)
+                # 姿态估计：基于"运动区域 + 帧节流"独立触发
+                # 设计动机（修复 #bug-decouple-pose）：
+                #   旧实现 if det_boxes: 将俯卧检测耦合到危险物品检测结果，
+                #   导致"画面中只有小孩趴睡、无危险物品"时俯卧检测完全失效。
+                #   新策略：只要画面有运动（间接说明有人活动）且到达推理节流
+                #   间隔，就执行俯卧检测。危险物品检测和俯卧检测是两个独立
+                #   的安全功能，不应相互依赖。
+                # 降级策略：pose 模型未加载成功或单次推理失败时静默跳过。
+                if (
+                    motion_regions
+                    and self._pose.is_available()
+                    and self._pose.should_run(self._frame_count)
+                ):
+                    try:
+                        pose_alerts = self._pose.detect_prone(frame.data)
+                        alerts.extend(pose_alerts)
+                    except Exception:
+                        # 防御性兜底：pose 模块已自带 try/except，此处仅
+                        # 防止未来重构时未捕获的异常影响主链路
+                        logger.exception("Pose detection raised unexpectedly")
+                    finally:
+                        self._pose.mark_ran(self._frame_count)
 
-    async def _consume_alerts(self) -> None:
-        """
-        消费推理线程投递的告警（事件循环侧）
+                # 睡姿（人脸可见性）监测：仅当显式启用时执行
+                # 设计动机（Person+Face 组合，跨平台预留）：
+                #   异常睡姿 = Person bbox 内无 Face。板端接入真实人脸
+                #   模型后，可将 faces 限定为 Person bbox 内再做判定。
+                #   当前 DummyFaceDetector 恒返回人脸，故默认不触发告警。
+                if (
+                    self._config.face.enabled
+                    and self._face.is_available()
+                    and motion_regions
+                ):
+                    sleep_alerts = self._check_sleep_posture(frame.data)
+                    alerts.extend(sleep_alerts)
 
-        设计动机：API WebSocket 推送、加密存储、数据库写入等均为异步操作，
-        必须在事件循环上下文中执行。推理线程只负责把告警放入队列，
-        本协程在此消费并调用 _handle_alert 完成完整处理链路。
-        """
-        while True:
-            alert = await self._alert_queue.get()
-            try:
-                await self._handle_alert(alert, None)
-            except Exception:
-                logger.exception("Error handling alert from queue")
+                # 告警处理
+                for alert in alerts:
+                    await self._handle_alert(alert, frame)
+
+            self._last_det_boxes = det_boxes
+
+            # 指标：检测结果分类计数
+            for box in det_boxes:
+                DETECTION_COUNT.labels(class_name=box.class_name).inc()
+
+            # 指标：FPS 滑动窗口（每 30 帧更新一次 Gauge）
+            now = time.monotonic()
+            self._fps_window.append(now)
+            # 保留最近 1 秒的帧时间戳
+            self._fps_window = [t for t in self._fps_window if now - t < 1.0]
+            if self._frame_count % 30 == 0:
+                PIPELINE_FPS.set(len(self._fps_window))
+
+            # 周期性去重清理（每 100 帧）
+            if self._frame_count % 100 == 0:
+                self._dedup.cleanup_expired()
+
+        except Exception:
+            logger.exception("Frame processing error (frame %d), pushing raw frame", frame.frame_id)
+        finally:
+            # 统一推送帧到 VideoHub（始终执行，确保视频流不中断）
+            # 设计动机（修复 #1）：即使帧处理失败，也要推送原始帧到前端，
+            # 否则 MJPEG 流会卡住，前端显示为无响应。
+            if self._api.video_hub is not None:
+                self._api.video_hub.push_frame(
+                    frame.data,
+                    boxes=det_boxes,
+                    motion_regions=motion_regions,
+                )
+
+        # 本地调试窗口
+        if self._show_debug_window:
+            self._draw_debug_window(frame)
 
     async def _handle_alert(self, alert: AlertLog, frame: Frame) -> None:
         """
@@ -440,6 +385,9 @@ class Pipeline:
 
         # 声光告警（后台任务，不阻塞主循环的帧处理）
         asyncio.create_task(self._alarm.trigger(alert.severity))
+
+        # 外部通知（webhook，含重试；后台任务，不阻塞帧处理）
+        asyncio.create_task(self._notifier.notify(alert))
 
         # SM4 加密存储
         self._crypto.encrypt_and_store(alert)
@@ -548,6 +496,47 @@ class Pipeline:
             except Exception:
                 logger.exception("Database cleanup failed")
 
+    async def _db_backup_loop(self) -> None:
+        """
+        周期性数据库热备份
+
+        设计动机：
+            SQLite 单机无并发保护与备份策略，设备故障/误删会导致告警记录
+            丢失。按配置间隔生成一致性快照，并清理超期备份。
+        """
+        interval = self._config.database.backup_interval_hours * 3600
+        while self._running:
+            await asyncio.sleep(interval)
+            try:
+                await asyncio.to_thread(self._backup_db_once, datetime.now())
+            except Exception:
+                logger.exception("Database backup task failed")
+
+    def _backup_db_once(self, now) -> bool:
+        """执行一次备份并清理超期备份（在线程池中运行）"""
+        cfg = self._config.database
+        backup_dir = Path(cfg.backup_dir)
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        ts = now.strftime("%Y%m%d_%H%M%S")
+        dest = backup_dir / f"loongguard_{ts}.db"
+        ok = self._db.backup(str(dest))
+
+        # 清理超期备份（保留 cfg.backup_retention_days 天）
+        try:
+            cutoff = now - timedelta(days=cfg.backup_retention_days)
+            for old in backup_dir.glob("loongguard_*.db"):
+                try:
+                    if datetime.fromtimestamp(old.stat().st_mtime) < cutoff:
+                        old.unlink()
+                        logger.info("清理过期备份: %s", old.name)
+                except OSError:
+                    pass
+        except Exception:
+            logger.exception("Backup retention cleanup failed")
+
+        return ok
+
     def _draw_debug_window(self, frame: Frame) -> None:
         """
         在本地 OpenCV 窗口显示摄像头画面及检测结果标注
@@ -622,6 +611,15 @@ async def main(config_path: Optional[str] = None) -> None:
     """
     config = load_config(config_path)
 
+    # 配置校验：启动早期一次性暴露配置错误，阻断启动而非带病运行
+    config_errors = validate_config(config)
+    if config_errors:
+        for err in config_errors:
+            logger.error("配置校验失败: %s", err)
+        raise SystemExit(
+            "配置校验失败，已阻止启动。请修正上述配置项后重试。"
+        )
+
     # 向后兼容：旧 JSON 配置只有 log_level 而无 log 段时，用 log_level 回填
     if config.log.level == "INFO" and config.log_level != "INFO":
         config.log.level = config.log_level
@@ -637,33 +635,22 @@ async def main(config_path: Optional[str] = None) -> None:
         console=config.log.console,
     )
 
-    # 端口占用自动重试：最多尝试 10 个连续端口
-    original_port = config.api.port
-    pipeline = None
-    for port_offset in range(10):
-        config.api.port = original_port + port_offset
-        pipeline = Pipeline(config)
-        try:
-            await pipeline.start()
-            break
-        except OSError as e:
-            if "10048" in str(e) or "address already in use" in str(e).lower():
-                logger.warning(
-                    "Port %d occupied, trying %d...",
-                    config.api.port, config.api.port + 1,
-                )
-                await pipeline.stop()
-                pipeline = None
-                continue
-            raise
-
-    if pipeline is None:
-        logger.error(
-            "Cannot start: ports %d-%d all occupied. "
-            "Kill other processes or set LG_API_PORT to a free port.",
-            original_port, original_port + 9,
-        )
-        return
+    # 端口占用即失败退出，交由进程守护（systemd/start.ps1）重启。
+    # 设计动机（修复隐患）：旧实现端口被占时自动 +1 递增，会导致端口漂移，
+    # 与写死 8081 的前端失联；且漂移后无人值守会静默运行在错误端口。
+    # 现在改为"失败即退出 + 守护进程重启"，保证端口始终与配置一致。
+    pipeline = Pipeline(config)
+    try:
+        await pipeline.start()
+    except OSError as e:
+        if "10048" in str(e) or "address already in use" in str(e).lower():
+            logger.error(
+                "端口 %d 已被占用，启动失败退出。请先释放端口或修改 "
+                "LG_API_PORT，然后由守护进程自动重启。",
+                config.api.port,
+            )
+            raise SystemExit(1)
+        raise
 
     logger.info("Dashboard: http://localhost:%d", config.api.port)
 

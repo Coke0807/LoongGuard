@@ -1,0 +1,65 @@
+# ============================================================
+# LoongGuard 后端 systemd 服务单元（LoongArch 生产环境）
+#
+# 安装步骤：
+#   1. 将项目部署到 /opt/loongguard/backend
+#   2. 把 .env 放到 /opt/loongguard/backend/.env（含 LG_SM4_KEY 等）
+#   3. 创建运行用户:  sudo useradd --system --home /opt/loongguard loongguard
+#   4. sudo cp deploy/loongguard.service /etc/systemd/system/
+#   5. sudo systemctl daemon-reload
+#   6. sudo systemctl enable --now loongguard
+#
+# 常用操作：
+#   systemctl status loongguard    # 查看状态
+#   journalctl -u loongguard -f    # 跟踪日志
+#   systemctl restart loongguard   # 手动重启
+# ============================================================
+
+[Unit]
+Description=LoongGuard AI Safety Guard Backend
+Documentation=file:///opt/loongguard/backend/README
+# 等待网络就绪后再启动（边界网关可能晚于网络启动）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# 工作目录与运行用户
+WorkingDirectory=/opt/loongguard/backend
+User=loongguard
+Group=loongguard
+
+# 自动加载全部 LG_* 环境变量（KEY=value 格式，无需 export）
+EnvironmentFile=/opt/loongguard/backend/.env
+
+# 使用项目虚拟环境启动主循环
+ExecStart=/opt/loongguard/venv/bin/python -m src.pipeline
+
+# 崩溃自动重启（无人值守核心保障）
+Restart=always
+RestartSec=5
+# 防止配置错误导致无限快速重启风暴
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# ── 安全加固（systemd 沙箱）────────────────────────────
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+# 仅允许写入数据与日志目录，其余只读
+ReadWritePaths=/opt/loongguard/backend/data /opt/loongguard/backend/logs
+ProtectHome=true
+# 摄像头/GPIO 设备访问
+DeviceAllow=/dev/video* rw
+DeviceAllow=/dev/gpiochip* rw
+DeviceAllow=/dev/crypto rw
+
+# 日志交给 journald 聚合（可再转发到 ELK/Loki）
+StandardOutput=journal
+StandardError=journal
+# 限制内存，防止长时间运行泄漏拖垮整机（按 LG200 8GB 调整）
+MemoryMax=3G
+
+[Install]
+WantedBy=multi-user.target

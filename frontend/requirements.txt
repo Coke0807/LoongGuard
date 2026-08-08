@@ -1,0 +1,6 @@
+PyQt6==6.8.1
+opencv-python>=4.8.0
+numpy>=1.24.0
+aiohttp>=3.9.0
+pyserial>=3.5
+minimalmodbus>=2.1.1

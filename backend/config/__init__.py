@@ -16,7 +16,9 @@ from .settings import (
     DatabaseConfig,
     DedupConfig,
     RetentionConfig,
+    NotificationConfig,
     load_config,
+    validate_config,
 )
 
 __all__ = [
@@ -35,5 +37,7 @@ __all__ = [
     "DatabaseConfig",
     "DedupConfig",
     "RetentionConfig",
+    "NotificationConfig",
     "load_config",
+    "validate_config",
 ]

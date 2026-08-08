@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -60,11 +61,6 @@ class DetectionConfig:
     backend: str = "onnxruntime"
     # OpenCL 设备索引（LG200）
     opencl_device_id: int = 0
-    # 静止危险品全帧扫描间隔（秒）
-    # 设计动机：运动触发的 ROI 检测无法捕捉静止危险品（如放在桌面的剪刀）。
-    # 每间隔该时长对整帧执行一次 YOLO 检测，作为"静止检测"兜底。
-    # 在独立推理线程中执行，不阻塞视频显示帧率。
-    full_scan_interval_sec: float = 1.5
     # 检测类别（危险物品）
     classes: list[str] = field(default_factory=lambda: [
         "magnetic_bead",      # 磁力珠
@@ -249,6 +245,12 @@ class DatabaseConfig:
     retention_days: int = 90
     # 启用 WAL 模式（提升并发读写性能）
     wal_mode: bool = True
+    # 定期备份目录
+    backup_dir: str = str(Path(__file__).parent.parent / "data" / "backup")
+    # 备份间隔（小时）
+    backup_interval_hours: int = 24
+    # 备份保留天数
+    backup_retention_days: int = 7
 
 
 @dataclass
@@ -280,6 +282,31 @@ class RetentionConfig:
 
 
 @dataclass
+class NotificationConfig:
+    """
+    外部告警通知配置
+
+    设计动机：
+        告警仅推送到 WebSocket + 入库，无人值守时依赖 WS 客户端在线，
+        漏报风险高。此配置允许将 HIGH/CRITICAL 级告警通过 webhook 推送
+        到外部网关（微信小程序 / 短信 / 电话），并带失败重试与升级降级。
+    """
+
+    # 是否启用外部通知
+    enabled: bool = False
+    # webhook 回调地址（POST JSON），对接微信小程序/短信/电话网关
+    webhook_url: str = ""
+    # 触发外部通知的最低严重等级（low/medium/high/critical）
+    min_severity: str = "high"
+    # 每次告警最大重试次数
+    retries: int = 3
+    # 重试退避基数（秒），第 n 次重试等待 retry_backoff_sec * 2^(n-1)
+    retry_backoff_sec: float = 2.0
+    # 请求超时（秒）
+    timeout_sec: float = 5.0
+
+
+@dataclass
 class AppConfig:
     """应用总配置"""
 
@@ -297,6 +324,9 @@ class AppConfig:
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     dedup: DedupConfig = field(default_factory=DedupConfig)
     retention: RetentionConfig = field(default_factory=RetentionConfig)
+    notify: NotificationConfig = field(default_factory=NotificationConfig)
+    # 运行环境：development / testing / production（由 LG_ENV 注入）
+    env: str = "development"
     # 已废弃：请使用 log.level，保留仅为向后兼容旧 JSON 配置
     log_level: str = "INFO"
     # 调试模式：开启后保存最近 N 帧到内存用于排查
@@ -320,6 +350,9 @@ def load_config(source: Optional[str] = None) -> AppConfig:
         - 例如 LG_DETECTION_CONF_THRESHOLD=0.5 覆盖 detection.conf_threshold
         - 布尔值：true/false/1/0
         - 列表值：JSON 数组字符串
+
+    注意：.env 的加载不在此处进行（保持配置模块纯净、可测试），
+    由应用入口（pipeline.main / 启动脚本）调用 load_dotenv() 完成。
     """
     if source is None:
         config = AppConfig()
@@ -332,7 +365,117 @@ def load_config(source: Optional[str] = None) -> AppConfig:
 
     # 环境变量覆盖（LG_ 前缀），始终生效
     _apply_env_overrides(config)
+
+    # 平台默认摄像头设备：Windows 用索引，Linux 用 /dev/videoN
+    # 设计动机：避免同一份 .env 在双平台语义不一致导致打不开摄像头。
+    if os.getenv("LG_CAMERA_DEVICE") is None:
+        config.camera.device = "0" if sys.platform == "win32" else "/dev/video0"
+
     return config
+
+
+def validate_config(config: AppConfig) -> list[str]:
+    """
+    校验配置合法性，返回错误信息列表（空列表表示通过）。
+
+    设计动机：
+        将"配置错误"在启动早期一次性暴露，而不是等到运行到某个模块才炸，
+        或更糟——在生产环境静默以不安全配置裸奔。
+
+    当前校验项：
+        - SM4 密钥必须为 32 位 hex 字符（16 字节），缺失即阻断启动
+        - 生产环境（LG_ENV=production）必须启用 Basic Auth
+        - 生产环境 LG_API_HOST 不应为 0.0.0.0（应由 HTTPS 反向代理转发）
+        - 外部通知启用时必须配置 webhook_url
+    """
+    errors: list[str] = []
+    is_prod = config.env == "production"
+
+    # SM4 密钥：缺失即阻断（加密存储是核心合规能力）
+    raw_key = os.environ.get("LG_SM4_KEY", "")
+    if not raw_key:
+        errors.append(
+            "LG_SM4_KEY 未设置：请填入 32 位 hex 字符(16字节) 密钥，"
+            "或注入 config/.sm4_key 文件"
+        )
+    else:
+        try:
+            key = bytes.fromhex(raw_key)
+            if len(key) != 16:
+                errors.append(
+                    f"LG_SM4_KEY 长度错误：期望 32 个 hex 字符(16字节)，"
+                    f"当前 {len(raw_key)} 个字符"
+                )
+        except ValueError:
+            errors.append("LG_SM4_KEY 不是有效的 hex 字符串")
+
+    # 生产环境安全红线
+    if is_prod:
+        if not config.api.auth_enabled:
+            errors.append(
+                "生产环境必须启用 Basic Auth：设置 LG_API_AUTH_ENABLED=true "
+                "及 LG_AUTH_USER / LG_AUTH_PASS"
+            )
+        if config.api.host in ("0.0.0.0", "::"):
+            errors.append(
+                "生产环境 LG_API_HOST 不应为 0.0.0.0：应由 HTTPS 反向代理"
+                "（Caddy/nginx）转发，Python 侧仅监听 127.0.0.1"
+            )
+
+    # 外部通知：启用但未配置 webhook
+    if config.notify.enabled and not config.notify.webhook_url.strip():
+        errors.append("LG_NOTIFY_ENABLED=true 但 LG_NOTIFY_WEBHOOK_URL 未配置")
+
+    return errors
+
+
+def _load_dotenv(dotenv_path: Optional[Path | str] = None) -> None:
+    """
+    极简 .env 加载器（零第三方依赖）。
+
+    设计动机：
+        避免为加载 .env 引入 python-dotenv 依赖（LoongArch 环境包管理
+        不便）。已存在于 os.environ 的变量优先，不覆盖，保证 shell 显式
+        注入的配置具备最高优先级。
+
+    同时检测文件内重复 KEY 并告警，避免"后值覆盖前值"的隐性 bug。
+    """
+    path = Path(dotenv_path) if dotenv_path else Path(__file__).parent.parent / ".env"
+    if not path.exists():
+        return
+
+    seen: dict[str, int] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        logger.warning("无法读取 .env 文件: %s", path)
+        return
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        key = key.strip()
+        value = value.strip()
+        # 去除行内注释（# 之后视为注释），值内 # 前内容保留
+        if "#" in value:
+            value = value.split("#", 1)[0].rstrip()
+        if not key:
+            continue
+
+        # 重复 KEY 检测
+        if key in seen:
+            logger.warning(
+                ".env 中 KEY 重复定义: %s (第 %d 行 与 第 %d 行)，后值将覆盖前值",
+                key, seen[key], lines.index(line) + 1,
+            )
+        else:
+            seen[key] = lines.index(line) + 1
+
+        # 已存在的环境变量优先，不覆盖
+        if key not in os.environ:
+            os.environ[key] = value
 
 
 def _load_from_json(path: Path) -> AppConfig:

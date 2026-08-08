@@ -1,0 +1,35 @@
+# ============================================================
+# LoongGuard HTTPS 反向代理（Caddy）
+#
+# 生产环境安全模型：
+#   - Caddy 对外终止 HTTPS（TLS 证书 + 强制加密）
+#   - Basic Auth 上移到 Caddy 层，后端 Python 只监听 127.0.0.1
+#   - 摄像头 /stream 与告警 WebSocket 均走 HTTPS，保护未成年人隐私
+#
+# 使用步骤：
+#   1. 安装 Caddy:  sudo apt install caddy
+#   2. 生成密码 hash:  caddy hash-password --plaintext '你的强密码'
+#   3. 将下方域名与 hash 替换后保存
+#   4. 运行:  sudo caddy run --config deploy/Caddyfile
+#   5. 后端必须监听 127.0.0.1（生产环境 LG_API_HOST=127.0.0.1）
+# ============================================================
+
+# 请替换为你的真实域名（用于自动签发 Let's Encrypt 证书）
+loongguard.example.com {
+
+    # HTTPS：自动申请并续期证书
+    tls admin@example.com
+
+    # Basic Auth：保护管理面板 / 视频流 / 告警接口
+    # hash 生成: caddy hash-password --plaintext '你的密码'
+    basicauth {
+        admin $2a$14$xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    }
+
+    # 反代到本机后端（后端不对外暴露，仅此代理可达）
+    reverse_proxy 127.0.0.1:8080 {
+        # WebSocket 升级（告警实时推送 /ws/alerts 需要）
+        header_up Upgrade {http.request.header.Upgrade}
+        header_up Connection {http.request.header.Connection}
+    }
+}

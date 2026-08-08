@@ -20,7 +20,9 @@ from config.settings import (
     CameraConfig,
     CryptoConfig,
     DetectionConfig,
+    NotificationConfig,
     load_config,
+    validate_config,
 )
 
 
@@ -263,3 +265,105 @@ class TestEnvOverride:
         cfg = load_config("config/default.json")
         # JSON 默认 inference_interval=3,env 覆盖为 7
         assert cfg.pose.inference_interval == 7
+
+
+# ── validate_config 测试（覆盖本次安全加固项）────────────────
+
+
+class TestValidateConfig:
+    """配置校验逻辑测试
+
+    设计动机：
+        校验在启动早期一次性暴露配置错误，避免生产环境带病/不安全运行。
+        每项校验规则独立测试，确保安全红线不被静默绕过。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_lg_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """清理所有 LG_* 环境变量，隔离外部配置干扰"""
+        for key in list(os.environ):
+            if key.startswith("LG_"):
+                monkeypatch.delenv(key, raising=False)
+
+    def test_missing_sm4_key_reports_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """LG_SM4_KEY 缺失应阻断启动"""
+        monkeypatch.delenv("LG_SM4_KEY", raising=False)
+        errors = validate_config(AppConfig())
+        assert any("LG_SM4_KEY" in e for e in errors)
+
+    def test_invalid_sm4_key_length_reports_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """LG_SM4_KEY 长度错误（非 32 hex 字符）应报错"""
+        monkeypatch.setenv("LG_SM4_KEY", "abcd")  # 长度不足
+        errors = validate_config(AppConfig())
+        assert any("长度错误" in e for e in errors)
+
+    def test_invalid_sm4_key_hex_reports_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """LG_SM4_KEY 非 hex 字符串应报错"""
+        monkeypatch.setenv("LG_SM4_KEY", "z" * 32)
+        errors = validate_config(AppConfig())
+        assert any("不是有效的 hex" in e for e in errors)
+
+    def test_valid_sm4_key_passes_nonprod(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """合法 32 hex 密钥 + 非生产环境应通过校验"""
+        monkeypatch.setenv("LG_SM4_KEY", "a" * 32)
+        errors = validate_config(AppConfig())
+        assert errors == []
+
+    def test_prod_requires_basic_auth(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """生产环境必须启用 Basic Auth，未启用则报错"""
+        monkeypatch.setenv("LG_SM4_KEY", "a" * 32)
+        cfg = AppConfig()
+        cfg.env = "production"
+        cfg.api.auth_enabled = False
+        errors = validate_config(cfg)
+        assert any("Basic Auth" in e for e in errors)
+
+    def test_prod_with_auth_enabled_passes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """生产环境启用 Basic Auth 且 host 非 0.0.0.0 应通过"""
+        monkeypatch.setenv("LG_SM4_KEY", "a" * 32)
+        cfg = AppConfig()
+        cfg.env = "production"
+        cfg.api.auth_enabled = True
+        cfg.api.host = "127.0.0.1"
+        errors = validate_config(cfg)
+        assert errors == []
+
+    def test_prod_host_not_wildcard(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """生产环境 host=0.0.0.0 应报错（应由 HTTPS 反向代理转发）"""
+        monkeypatch.setenv("LG_SM4_KEY", "a" * 32)
+        cfg = AppConfig()
+        cfg.env = "production"
+        cfg.api.auth_enabled = True
+        cfg.api.host = "0.0.0.0"
+        errors = validate_config(cfg)
+        assert any("0.0.0.0" in e for e in errors)
+
+    def test_notify_enabled_without_webhook_reports_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """外部通知启用但未配置 webhook_url 应报错"""
+        monkeypatch.setenv("LG_SM4_KEY", "a" * 32)
+        cfg = AppConfig()
+        cfg.notify = NotificationConfig(enabled=True, webhook_url="")
+        errors = validate_config(cfg)
+        assert any("LG_NOTIFY_WEBHOOK_URL" in e for e in errors)
+
+    def test_notify_enabled_with_webhook_passes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """外部通知启用且配置 webhook_url 应通过"""
+        monkeypatch.setenv("LG_SM4_KEY", "a" * 32)
+        cfg = AppConfig()
+        cfg.notify = NotificationConfig(enabled=True, webhook_url="https://gw.example.com/alert")
+        errors = validate_config(cfg)
+        assert errors == []

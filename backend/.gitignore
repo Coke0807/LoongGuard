@@ -1,9 +1,10 @@
 # ============================================================
-# LoongGuard .gitignore
-# 环境: Windows 11 主机 → 私密远程仓库 → LoongArch 远程主机
+# LoongGuard backend/.gitignore — 后端专属规则
+# 通用规则（__pycache__、.env、venv、IDE、OS 等）已移至根目录 .gitignore
+# ============================================================
 #
 # 过滤策略:
-#   忽略 - 虚拟环境、运行时产物、IDE 配置、OS 临时文件、编译缓存
+#   忽略 - 运行时产物、编译产物、密钥、压缩包、临时目录
 #   提交 - 源代码、配置、模型文件、视频素材、项目文档
 #
 # 大文件阈值: 50MB (超过此大小的单文件建议评估后决定是否入库)
@@ -17,64 +18,22 @@
 
 
 # ──────────────────────────────────────────────
-# Python 运行时 & 虚拟环境
-# ──────────────────────────────────────────────
-
-# 字节码
-__pycache__/
-*.py[cod]
-*$py.class
-*.pyo
-
-# 虚拟环境 (核心忽略项, 约 14000+ 文件)
-.venv/
-venv/
-.venv.bak/
-venv.bak/
-
-# 分发 & 构建产物
-*.egg-info/
-*.egg
-dist/
-build/
-eggs/
-sdist/
-develop-eggs/
-*.whl
-pip-wheel-metadata/
-.installed.cfg
-
-# pip 日志
-pip-log.txt
-pip-delete-this-directory.txt
-
-# 类型检查 & 静态分析缓存
-.mypy_cache/
-.dmypy.json
-dmypy.json
-.pyre/
-.pytype/
-.ruff_cache/
-
-
-# 图片素材
-*.jpg
-*.png
-
-
-# ──────────────────────────────────────────────
 # 运行时产物 (可重新生成, 非开发必需)
 # ──────────────────────────────────────────────
 
-# 日志目录
-logs/
-log/
+# 运行时日志 (server 进程 stdout/stderr 重定向)
+server_*.log
 
 # 运行时生成的数据 (保留 data/ 目录结构和配置)
-data/processed/
+data/processed/*
+# 数据集配置文件，明确提交（通过 ! 否定规则排除忽略）
+!data/processed/data.yaml
 data/screenshots/
 data/*.db
 data/uploads/
+
+# 临时素材工作目录（迁移至 tests/fixtures/ 后应删除）
+video/
 
 
 # ──────────────────────────────────────────────
@@ -95,85 +54,8 @@ config/.sm4_key
 
 
 # ──────────────────────────────────────────────
-# 操作系统临时文件
+# C/C++ 编译产物 (LoongArch 交叉编译或本地构建)
 # ──────────────────────────────────────────────
-
-# Windows
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-$RECYCLE.BIN/
-*.lnk
-*.tmp
-~$*
-
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-._*
-
-# Linux
-*~
-.fuse_hidden*
-.directory
-
-
-# ──────────────────────────────────────────────
-# IDE & 编辑器配置
-# ──────────────────────────────────────────────
-
-# VS Code
-.vscode/
-
-# JetBrains (PyCharm / CLion)
-.idea/
-*.iml
-*.iws
-*.ipr
-
-# Sublime Text
-*.sublime-project
-*.sublime-workspace
-
-# Vim / Neovim
-*.swp
-*.swo
-Session.vim
-.netrwhist
-
-# Emacs
-\#*\#
-.\#*
-
-# Jupyter Notebook
-.ipynb_checkpoints/
-
-# Trae IDE
-.trae/
-
-
-# ──────────────────────────────────────────────
-# 测试 & 覆盖率
-# ──────────────────────────────────────────────
-
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-coverage.xml
-*.cover
-*.py,cover
-.tox/
-.nox/
-.hypothesis/
-.cache
-
-
-# ──────────────────────────────────────────────
-# C/C++ 编译产物
-# ──────────────────────────────────────────────
-
 *.o
 *.obj
 *.lo
@@ -195,7 +77,6 @@ coverage.xml
 # ──────────────────────────────────────────────
 # 构建 & 部署产物
 # ──────────────────────────────────────────────
-
 out/
 target/
 output/
@@ -217,7 +98,6 @@ docker-compose.override.yml
 # ──────────────────────────────────────────────
 # 临时 & 缓存目录
 # ──────────────────────────────────────────────
-
 tmp/
 temp/
 .tmp/
@@ -230,40 +110,30 @@ temp/
 *.backup
 *.old
 
-# 日志文件 (通配)
-*.log
-*.log.*
 
-
-# ──────────────────────────────────────────────
-# 杂项
-# ──────────────────────────────────────────────
-
-node_modules/
-
-# MCP 配置 (含 API 密钥)
-.mcp.json
+# pip 日志
+pip-log.txt
+pip-delete-this-directory.txt
 
 
 # ============================================================
-# 以下为 "明确提交" 范围的说明 (无需 gitignore 规则)
+# 以下为 "明确提交" 范围的说明 (无需额外 gitignore 规则)
 # ============================================================
 #
 # [模型文件 - 明确提交]
-#   models/*.onnx          - ONNX 格式量化模型
-#   models/*.tflite        - TFLite 格式量化模型
-#   models/*.pt            - PyTorch 原始权重
+#   models/*.onnx          - ONNX 格式量化模型 (movenet_lightning_int8, yolo26_nano_int8)
+#   models/*.tflite        - TFLite 格式量化模型 (预留)
+#   models/*.pt            - PyTorch 原始权重 (预留)
 #
 # [视频素材 - 明确提交]
 #   tests/mock_classroom.mp4           - 冒烟测试合成视频
 #   tests/fixtures/*.mp4               - 真实幼儿园素材（效果回归）
 #   data/raw/*.mp4 / *.avi / *.mov / *.mkv - 训练数据集原始视频
 #
-# [video/ 目录 - 不入库]
-#   video/ - 临时素材工作目录，迁移至 tests/fixtures/ 后应删除
-#
 # [目录占位 - 明确提交]
 #   data/raw/.gitkeep      - 保持空目录结构
-#   data/processed/data.yaml - 数据集配置文件
+#
+# [数据集配置 - 通过 ! 规则排除忽略]
+#   data/processed/data.yaml - 数据集配置文件 (已通过 !data/processed/data.yaml 取消忽略)
 #
 # 以上文件均不受本 .gitignore 排除, 会正常纳入版本控制。

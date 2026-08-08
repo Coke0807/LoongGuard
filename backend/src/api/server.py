@@ -26,6 +26,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
@@ -68,14 +69,6 @@ class VideoHub:
         self._latest_web_jpeg: Optional[bytes] = None
         self._lock = __import__("threading").Lock()
 
-        # 最新推理叠加数据（由独立推理线程 set_overlay 更新，显示线程读取）
-        # 设计动机（帧率解耦）：显示帧率不应受推理耗时限制。
-        # 推理线程持续更新最新检测框/运动区域/关键点，push_frame 只负责
-        # 把"最新结果"叠加到当前待显示帧上并编码，从而显示可达摄像头原生帧率。
-        self._latest_boxes: list[BoundingBox] = []
-        self._latest_motion: list = []
-        self._latest_keypoints: Optional[np.ndarray] = None
-
         # 实时统计
         self._frame_count: int = 0
         self._alert_count: int = 0
@@ -83,47 +76,29 @@ class VideoHub:
         self._start_time: float = time.time()
         self._frame_times: deque[float] = deque(maxlen=60)
 
-    def set_overlay(
+    def push_frame(
         self,
+        frame_rgb: np.ndarray,
         boxes: Optional[list[BoundingBox]] = None,
         motion_regions: Optional[list] = None,
         keypoints: Optional[np.ndarray] = None,
     ) -> None:
         """
-        更新最新推理叠加数据（推理线程调用，线程安全）
-
-        与 push_frame 解耦：推理线程在后台持续更新这些结果，
-        显示线程 push_frame 时直接读取最新值叠加，互不阻塞。
-        """
-        with self._lock:
-            self._latest_boxes = list(boxes) if boxes else []
-            self._latest_motion = list(motion_regions) if motion_regions else []
-            self._latest_keypoints = keypoints
-
-    def push_frame(
-        self,
-        frame_rgb: np.ndarray,
-    ) -> None:
-        """
         推送一帧到视频流缓冲
 
-        采集线程高频调用（可达摄像头原生帧率），仅负责把推理线程
-        更新的最新叠加数据（set_overlay 写入）绘制到当前帧并编码。
-        推理与显示解耦，帧率不受推理耗时限制。
+        Pipeline 主循环每处理完一帧调用一次。
+        在帧上绘制检测框、运动区域后编码为 JPEG。
 
         Args:
             frame_rgb: RGB 格式帧数据 (H, W, 3)
+            boxes: 检测框列表
+            motion_regions: 运动区域列表
+            keypoints: MoveNet 关键点 (17, 3)
         """
         try:
             import cv2
 
             display = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-
-            # 读取最新推理叠加数据（线程安全快照）
-            with self._lock:
-                boxes = list(self._latest_boxes)
-                motion_regions = list(self._latest_motion)
-                keypoints = self._latest_keypoints
 
             # 绘制运动区域
             if motion_regions:
@@ -619,6 +594,11 @@ class AlertAPIServer:
         self.video_hub = VideoHub()
         self.video_analyzer = VideoAnalyzer()
         self._db: Any = None
+        # 认证凭据（在 .env 加载后构造，因此此处读取是安全的）
+        # 设计动机：旧实现模块导入时读取 os.environ，导致 .env 未注入时
+        # 凭据为空、认证静默失效。改为实例级读取，保证拿到真实配置。
+        self._auth_user = os.environ.get("LG_AUTH_USER", "")
+        self._auth_pass = os.environ.get("LG_AUTH_PASS", "")
         # 注入：模型健康快照提供者（None 表示未注入，对应端点返回 503）
         self._pose_health_provider: Optional[Any] = None
         self._detection_health_provider: Optional[Any] = None
@@ -634,7 +614,8 @@ class AlertAPIServer:
 
         self._app = web.Application(
             client_max_size=_MAX_UPLOAD_SIZE,
-            middlewares=[_auth_middleware] if self._config.auth_enabled else [],
+            # 始终挂认证+审计中间件（内部按 auth_enabled 决定是否强校验）
+            middlewares=[_make_server_middleware(self)],
         )
 
         # 路由注册
@@ -671,6 +652,9 @@ class AlertAPIServer:
         self._app.router.add_get("/health/pose", self._handle_health_pose)
         self._app.router.add_get("/health/detection", self._handle_health_detection)
         self._app.router.add_get("/health", self._handle_health)
+
+        # 审计日志查询端点（合规：查看敏感接口访问记录）
+        self._app.router.add_get("/api/v1/audit", self._handle_audit)
 
         runner = web.AppRunner(self._app)
         await runner.setup()
@@ -1219,14 +1203,84 @@ class AlertAPIServer:
                 components["detection"] = "error"
 
         overall_ok = all(v in ("ok", "missing") for v in components.values())
+
+        # 暴露实际生效的 ONNX 执行提供程序（运维确认 CUDA/OpenCL 是否真生效）
+        try:
+            from src.utils.onnx_session import select_providers
+
+            providers = select_providers()
+        except Exception:
+            providers = []
+
         return web.json_response({
             "status": "running" if overall_ok else "degraded",
             "components": components,
+            "onnx_providers": providers,
         }, status=200 if overall_ok else 503)
 
     def set_database(self, db: Any) -> None:
         """注入数据库引用，供告警查询和确认接口使用"""
         self._db = db
+
+    # ── 认证与审计（供中间件调用）─────────────────────────
+
+    def auth_ok(self, request: Any) -> bool:
+        """
+        Basic Auth 校验。
+
+        未启用认证（auth_enabled=False）时直接放行；
+        启用后凭据缺失视为未授权（fail-closed，安全优先）。
+        """
+        if not self._config.auth_enabled:
+            return True
+        if not self._auth_user or not self._auth_pass:
+            return False
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Basic "):
+            return False
+        try:
+            decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+            user, _, passwd = decoded.partition(":")
+        except (ValueError, UnicodeDecodeError):
+            return False
+        return hmac.compare_digest(user, self._auth_user) and hmac.compare_digest(
+            passwd, self._auth_pass
+        )
+
+    def enqueue_audit(self, request: Any) -> None:
+        """
+        异步记录敏感接口访问审计（不阻塞请求）。
+
+        sqlite 写入放到线程池执行，避免阻塞事件循环。
+        """
+        if self._db is None:
+            return
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "method": request.method,
+            "path": request.path,
+            "remote": request.remote or "",
+            "user_agent": (request.headers.get("User-Agent", "") or "")[:200],
+        }
+        asyncio.create_task(asyncio.to_thread(self._db.insert_audit, entry))
+
+    async def _handle_audit(self, request: Any) -> Any:
+        """审计日志查询（分页），用于合规审查"""
+        from aiohttp import web
+
+        if self._db is None:
+            return web.json_response({"error": "database not initialized"}, status=503)
+
+        try:
+            page = max(1, int(request.query.get("page", "1")))
+        except (ValueError, TypeError):
+            page = 1
+        try:
+            page_size = min(100, max(1, int(request.query.get("page_size", "20"))))
+        except (ValueError, TypeError):
+            page_size = 20
+
+        return web.json_response(self._db.query_audit(page=page, page_size=page_size))
 
     def set_pose_health_provider(self, provider: Any) -> None:
         """
@@ -1278,47 +1332,41 @@ async def _send_placeholder(response: Any) -> None:
     )
 
 
-# ── Basic Auth 中间件 ──────────────────────────────────────────
+# ── Basic Auth 中间件 + 访问审计 ────────────────────────────
 
-_AUTH_USER = os.environ.get("LG_AUTH_USER", "")
-_AUTH_PASS = os.environ.get("LG_AUTH_PASS", "")
+# 需要审计记录的高敏感路径（涉及未成年人隐私）
+_AUDIT_PATHS = {
+    "/stream",
+    "/ws/alerts",
+    "/api/v1/alerts",
+    "/api/v1/stats",
+    "/api/v1/status",
+}
 
 
-@web.middleware
-async def _auth_middleware(request: web.Request, handler: Any) -> web.StreamResponse:
+def _make_server_middleware(server: "AlertAPIServer") -> Any:
     """
-    Basic Auth 验证中间件
+    生成后端中间件（认证 + 访问审计）闭包工厂。
 
     设计动机：
-        内网 API 需要轻量级访问控制，避免未授权访问管理面板和视频流。
-        Basic Auth 足够用于局域网场景，无需引入 JWT 等第三方依赖。
-
-    仅当 LG_AUTH_USER 和 LG_AUTH_PASS 同时设置时启用验证。
-    使用 hmac.compare_digest 防止时序攻击。
+        1. 认证凭据从 server 实例读取（.env 加载后构造），修复旧实现
+           "模块导入时读 os.environ 导致凭据为空"的时序 bug。
+        2. 敏感路径访问（含失败尝试）写入审计日志，满足未成年人隐私合规。
+        3. 使用 hmac.compare_digest 防止时序攻击。
     """
-    if request.path in ("/metrics",):
+
+    @web.middleware
+    async def _middleware(request: web.Request, handler: Any) -> web.StreamResponse:
+        # 审计：高敏感路径记录访问（认证前记录，失败尝试同样留痕）
+        if request.path in _AUDIT_PATHS:
+            server.enqueue_audit(request)
+
+        # 认证：/metrics 放行（Prometheus 抓取），其余按配置校验
+        if request.path != "/metrics" and not server.auth_ok(request):
+            raise web.HTTPUnauthorized(
+                headers={"WWW-Authenticate": 'Basic realm="LoongGuard"'},
+            )
+
         return await handler(request)
 
-    if not _AUTH_USER or not _AUTH_PASS:
-        return await handler(request)
-
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Basic "):
-        raise web.HTTPUnauthorized(
-            headers={"WWW-Authenticate": 'Basic realm="LoongGuard"'},
-        )
-
-    try:
-        decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
-        user, _, passwd = decoded.partition(":")
-    except (ValueError, UnicodeDecodeError):
-        raise web.HTTPUnauthorized(
-            headers={"WWW-Authenticate": 'Basic realm="LoongGuard"'},
-        )
-
-    if not (hmac.compare_digest(user, _AUTH_USER) and hmac.compare_digest(passwd, _AUTH_PASS)):
-        raise web.HTTPUnauthorized(
-            headers={"WWW-Authenticate": 'Basic realm="LoongGuard"'},
-        )
-
-    return await handler(request)
+    return _middleware
