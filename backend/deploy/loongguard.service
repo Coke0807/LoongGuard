@@ -33,8 +33,8 @@ Group=loongguard
 # 自动加载全部 LG_* 环境变量（KEY=value 格式，无需 export）
 EnvironmentFile=/opt/loongguard/backend/.env
 
-# 使用项目虚拟环境启动主循环
-ExecStart=/opt/loongguard/venv/bin/python -m src.pipeline
+# 使用项目虚拟环境启动主循环（统一入口 run.py）
+ExecStart=/opt/loongguard/venv/bin/python run.py
 
 # 崩溃自动重启（无人值守核心保障）
 Restart=always

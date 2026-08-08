@@ -18,8 +18,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import pytest
 
-from src.utils import onnx_session
-from src.utils.onnx_session import (
+from loongguard.utils import onnx_session
+from loongguard.utils.onnx_session import (
     _INTRA_OP_THREADS_ENV,
     _default_intra_op_threads,
     create_session,

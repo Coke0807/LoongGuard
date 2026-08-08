@@ -23,8 +23,8 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.settings import PoseConfig
-from src.pose.movenet import MoveNetLightning
-from src.utils.schema import AlertLog, AlertSeverity, AlertType
+from loongguard.pose.movenet import MoveNetLightning
+from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType
 
 # 模型路径
 MOVENET_MODEL_PATH = str(PROJECT_ROOT / "models" / "movenet_lightning_int8.onnx")

@@ -22,9 +22,9 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.settings import DetectionConfig
-from src.detection.inference_onnx import InferenceResult, LoongONNXPredictor
-from src.detection.yolo26_nano import YOLO26Nano
-from src.utils.schema import BoundingBox
+from loongguard.detection.inference_onnx import InferenceResult, LoongONNXPredictor
+from loongguard.detection.yolo26_nano import YOLO26Nano
+from loongguard.utils.schema import BoundingBox
 
 # 模型路径
 YOLO_MODEL_PATH = str(PROJECT_ROOT / "models" / "yolo26_nano_int8.onnx")

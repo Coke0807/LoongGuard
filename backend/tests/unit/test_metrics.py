@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from src.api.metrics import (
+from loongguard.api.metrics import (
     ALERT_COUNT,
     ALERT_DEDUP_SUPPRESSED,
     DB_OPERATIONS,
@@ -18,7 +18,7 @@ from src.api.metrics import (
     get_metrics_content_type,
     _HAS_PROMETHEUS,
 )
-import src.api.metrics as metrics_module
+import loongguard.api.metrics as metrics_module
 
 # 根据 prometheus_client 是否安装决定跳过测试
 requires_prometheus = pytest.mark.skipif(
@@ -108,7 +108,7 @@ class TestMetricsMockMode:
         ALERT_COUNT.labels(severity="high", alert_type="test").inc()
         ALERT_DEDUP_SUPPRESSED.inc()
         # Gauge 支持 inc/dec/set
-        from src.api.metrics import PIPELINE_FPS
+        from loongguard.api.metrics import PIPELINE_FPS
         PIPELINE_FPS.set(25.0)
         PIPELINE_FPS.inc()
         PIPELINE_FPS.dec()

@@ -14,8 +14,8 @@ import asyncio
 import pytest
 
 from config import NotificationConfig
-from src.alerts.notifier import AlertNotifier
-from src.utils.schema import AlertLog, AlertSeverity, AlertType
+from loongguard.alerts.notifier import AlertNotifier
+from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType
 
 
 def _alert(severity: AlertSeverity = AlertSeverity.HIGH) -> AlertLog:

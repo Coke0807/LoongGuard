@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 import pytest
-from src.utils.retention import VideoRetentionManager
+from loongguard.utils.retention import VideoRetentionManager
 
 
 @dataclass

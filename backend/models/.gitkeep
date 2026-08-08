@@ -1,0 +1,2 @@
+# 模型文件（.onnx / .pt 等）不入库，请通过独立渠道（网盘/内网共享）分发后放置于此。
+# 需与 config/default.json 中 detection.model_path / face.model_path 对应。

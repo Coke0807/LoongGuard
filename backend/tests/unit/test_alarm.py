@@ -15,8 +15,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from config.settings import AlarmConfig
-from src.alarm.gpio_trigger import GPIOAlarmTrigger, _BUZZER_PATTERNS
-from src.utils.schema import AlertSeverity
+from loongguard.alarm.gpio_trigger import GPIOAlarmTrigger, _BUZZER_PATTERNS
+from loongguard.utils.schema import AlertSeverity
 
 
 class TestGPIOAlarmTrigger:

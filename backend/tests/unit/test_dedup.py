@@ -5,8 +5,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from src.alerts.dedup import AlertDeduplicator
-from src.utils.schema import AlertLog, AlertType, AlertSeverity, BoundingBox
+from loongguard.alerts.dedup import AlertDeduplicator
+from loongguard.utils.schema import AlertLog, AlertType, AlertSeverity, BoundingBox
 
 
 @dataclass

@@ -1,0 +1,5 @@
+# LoongGuard frontend/.gitignore — 前端专属规则
+# 通用规则（__pycache__、.venv、*.db、*.log 等）已由根目录 .gitignore 覆盖
+
+# 运行时截图产物（由 ui/main.py 生成，不入库）
+capture/

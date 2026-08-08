@@ -50,7 +50,7 @@ Write-Host "[run] 后端端口: $env:LG_API_PORT (默认 8080)" -ForegroundColor
 # ── 3. 崩溃自动重启循环 ──
 while ($true) {
     Write-Host "[run] 启动 LoongGuard 后端..." -ForegroundColor Cyan
-    & $py -m src.pipeline
+    & $py run.py
     $code = $LASTEXITCODE
 
     if ($code -eq 0 -or $code -eq 1) {

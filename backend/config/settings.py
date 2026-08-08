@@ -239,14 +239,14 @@ class LogConfig:
 class DatabaseConfig:
     """SQLite 数据库配置"""
 
-    # 数据库文件路径
-    db_path: str = str(Path(__file__).parent.parent / "data" / "loongguard.db")
+    # 数据库文件路径（运行时数据，位于 data/db/）
+    db_path: str = str(Path(__file__).parent.parent / "data" / "db" / "loongguard.db")
     # 告警保留天数
     retention_days: int = 90
     # 启用 WAL 模式（提升并发读写性能）
     wal_mode: bool = True
-    # 定期备份目录
-    backup_dir: str = str(Path(__file__).parent.parent / "data" / "backup")
+    # 定期备份目录（运行时数据，与主库同目录便于统一清理）
+    backup_dir: str = str(Path(__file__).parent.parent / "data" / "db" / "backup")
     # 备份间隔（小时）
     backup_interval_hours: int = 24
     # 备份保留天数

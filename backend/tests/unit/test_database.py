@@ -4,8 +4,8 @@
 """
 
 import pytest
-from src.db.database import AlertDatabase
-from src.utils.schema import AlertLog, AlertType, AlertSeverity, BoundingBox
+from loongguard.db.database import AlertDatabase
+from loongguard.utils.schema import AlertLog, AlertType, AlertSeverity, BoundingBox
 
 
 @pytest.fixture

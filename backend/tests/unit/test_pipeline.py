@@ -22,10 +22,10 @@ import numpy as np
 import pytest
 
 from config.settings import AppConfig
-from src.pipeline import Pipeline
-from src.utils.schema import AlertLog, AlertSeverity, AlertType, BoundingBox
-from src.motion.frame_diff import MotionRegion
-from src.camera.v4l2_capture import Frame
+from loongguard.pipeline import Pipeline
+from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType, BoundingBox
+from loongguard.motion.frame_diff import MotionRegion
+from loongguard.camera.v4l2_capture import Frame
 
 
 # ── Helpers ────────────────────────────────────────────────

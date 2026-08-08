@@ -22,12 +22,13 @@ import numpy as np
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from config import load_config
-from src.camera.v4l2_capture import V4L2Capture
-from src.detection.yolo26_nano import YOLO26Nano
-from src.motion.frame_diff import FrameDiffDetector
-from src.pose.movenet import MoveNetLightning
+from loongguard.camera.v4l2_capture import V4L2Capture
+from loongguard.detection.yolo26_nano import YOLO26Nano
+from loongguard.motion.frame_diff import FrameDiffDetector
+from loongguard.pose.movenet import MoveNetLightning
 
 
 def run_one_mode(

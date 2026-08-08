@@ -24,8 +24,8 @@ import pytest_asyncio
 aiohttp = pytest.importorskip("aiohttp", reason="aiohttp is required for API tests")
 
 from config.settings import APIConfig
-from src.api.server import AlertAPIServer
-from src.utils.schema import AlertLog, AlertSeverity, AlertType
+from loongguard.api.server import AlertAPIServer
+from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType
 
 
 # ── 辅助函数 ─────────────────────────────────────────────────

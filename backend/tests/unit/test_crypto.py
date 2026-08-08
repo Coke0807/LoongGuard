@@ -18,8 +18,8 @@ from pathlib import Path
 import pytest
 
 from config.settings import CryptoConfig
-from src.crypto.sm4_logger import SM4Logger, _pkcs7_pad, _pkcs7_unpad
-from src.utils.schema import AlertLog, AlertSeverity, AlertType
+from loongguard.crypto.sm4_logger import SM4Logger, _pkcs7_pad, _pkcs7_unpad
+from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType
 
 
 # ── 常量 ──────────────────────────────────────────────────────

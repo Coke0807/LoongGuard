@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from src.utils.logging_config import JsonFormatter, setup_logging
+from loongguard.utils.logging_config import JsonFormatter, setup_logging
 
 
 class TestJsonFormatter:

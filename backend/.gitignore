@@ -4,16 +4,17 @@
 # ============================================================
 #
 # 过滤策略:
-#   忽略 - 运行时产物、编译产物、密钥、压缩包、临时目录
-#   提交 - 源代码、配置、模型文件、视频素材、项目文档
+#   忽略 - 运行时产物、编译产物、密钥、压缩包、临时目录、大体积二进制
+#   提交 - 源代码、配置、测试视频素材、项目文档
 #
 # 大文件阈值: 50MB (超过此大小的单文件建议评估后决定是否入库)
 # 视频素材路径:
 #   tests/mock_classroom.mp4         - 冒烟测试合成视频（6MB，CI 必跑）
 #   tests/fixtures/*.mp4             - 真实幼儿园素材（效果回归测试）
-#   data/raw/                        - 训练数据集原始视频
+#   datasets/raw/                    - 训练数据集原始视频
 #   video/                           - 临时素材工作目录（不入库，迁移完成后删除）
-# 模型文件路径: models/ 下的 .onnx / .tflite / .pt 文件明确提交
+# 模型文件路径: models/ 下的 .onnx / .pt / 视频等大文件明确排除，不入库，
+#   由用户通过独立渠道手动分发（脚本 sync.py 通过 force_include 同步到龙芯）
 # ============================================================
 
 
@@ -21,16 +22,33 @@
 # 运行时产物 (可重新生成, 非开发必需)
 # ──────────────────────────────────────────────
 
+# ── 模型等大体积二进制文件（不入库，独立渠道分发）──
+# 模型权重、中间产物、视频素材均在独立渠道分发，避免仓库膨胀
+models/*.onnx
+models/*.pt
+models/*.pth
+models/*.tflite
+models/*.pb
+models/*.engine
+models/*.video
+models/*.mp4
+models/*.avi
+models/*.mov
+models/*.mkv
+models/*.webm
+models/tmp/
+models/.cache/
+
 # 运行时日志 (server 进程 stdout/stderr 重定向)
 server_*.log
 
-# 运行时生成的数据 (保留 data/ 目录结构和配置)
-data/processed/*
-# 数据集配置文件，明确提交（通过 ! 否定规则排除忽略）
-!data/processed/data.yaml
-data/screenshots/
-data/*.db
-data/uploads/
+# 运行时数据目录（可重新生成，全部忽略；代码通过 mkdir 自动创建）
+data/
+# 持久化数据集资产（提交；raw/ 内大视频按独立渠道分发，仅保留占位）
+datasets/
+!datasets/raw/.gitkeep
+!datasets/processed/
+!datasets/processed/data.yaml
 
 # 临时素材工作目录（迁移至 tests/fixtures/ 后应删除）
 video/
@@ -117,23 +135,22 @@ pip-delete-this-directory.txt
 
 
 # ============================================================
-# 以下为 "明确提交" 范围的说明 (无需额外 gitignore 规则)
+# 提交范围说明（models/ 大文件已排除，见上方过滤策略）
 # ============================================================
 #
-# [模型文件 - 明确提交]
-#   models/*.onnx          - ONNX 格式量化模型 (movenet_lightning_int8, yolo26_nano_int8)
-#   models/*.tflite        - TFLite 格式量化模型 (预留)
-#   models/*.pt            - PyTorch 原始权重 (预留)
+# [排除 - 大文件，独立渠道分发]
+#   models/*.onnx / *.pt / *.mp4 等  -> 请一并放入独立分发包（网盘/内网共享）
+#   已入库的历史模型文件需执行 git rm --cached 后重新提交以解除跟踪
 #
 # [视频素材 - 明确提交]
 #   tests/mock_classroom.mp4           - 冒烟测试合成视频
 #   tests/fixtures/*.mp4               - 真实幼儿园素材（效果回归）
-#   data/raw/*.mp4 / *.avi / *.mov / *.mkv - 训练数据集原始视频
+#   datasets/raw/*.mp4 / *.avi / *.mov / *.mkv - 训练数据集原始视频
 #
 # [目录占位 - 明确提交]
-#   data/raw/.gitkeep      - 保持空目录结构
+#   datasets/raw/.gitkeep      - 保持空目录结构
 #
 # [数据集配置 - 通过 ! 规则排除忽略]
-#   data/processed/data.yaml - 数据集配置文件 (已通过 !data/processed/data.yaml 取消忽略)
+#   datasets/processed/data.yaml - 数据集配置文件
 #
 # 以上文件均不受本 .gitignore 排除, 会正常纳入版本控制。

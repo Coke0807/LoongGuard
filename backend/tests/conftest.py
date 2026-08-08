@@ -14,9 +14,10 @@ from pathlib import Path
 import pytest
 import numpy as np
 
-# 将项目根目录加入 sys.path
+# 将项目根目录与 src 目录加入 sys.path（src-layout：包位于 backend/src/loongguard）
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 
 @pytest.fixture

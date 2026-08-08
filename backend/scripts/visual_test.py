@@ -29,12 +29,13 @@ import numpy as np
 # 确保项目根目录在 sys.path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from config import load_config
-from src.camera.v4l2_capture import V4L2Capture
-from src.motion.frame_diff import FrameDiffDetector
-from src.detection.yolo26_nano import YOLO26Nano
-from src.pose.movenet import MoveNetLightning
+from loongguard.camera.v4l2_capture import V4L2Capture
+from loongguard.motion.frame_diff import FrameDiffDetector
+from loongguard.detection.yolo26_nano import YOLO26Nano
+from loongguard.pose.movenet import MoveNetLightning
 
 
 # ── 颜色常量 ──────────────────────────────────────────────────

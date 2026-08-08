@@ -10,10 +10,10 @@ LoongGuard 前端启动入口
 import sys
 import os
 
-# 确保项目根目录在 Python 路径中，使 src/ 包可被导入
+# 确保项目根目录在 Python 路径中，使 ui/ 包可被导入
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from src.main import main
+from ui.main import main
 
 if __name__ == "__main__":
     main()

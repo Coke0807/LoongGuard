@@ -56,7 +56,7 @@ gpu = [
 
 # ── CLI 入口 ─────────────────────────────────────────────────
 [project.scripts]
-loongguard = "src.pipeline:main"
+loongguard = "loongguard.pipeline:main"
 
 # ── Pytest 配置 ──────────────────────────────────────────────
 [tool.pytest.ini_options]
@@ -66,4 +66,4 @@ addopts = "-v --tb=short"
 
 # ── Setuptools 包发现 ────────────────────────────────────────
 [tool.setuptools.packages.find]
-include = ["src*", "config*"]
+include = ["loongguard*", "config*"]

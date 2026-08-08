@@ -16,9 +16,9 @@ import numpy as np
 import pytest
 
 from config import DetectionConfig, ROIConfig
-from src.motion.frame_diff import MotionRegion
-from src.roi.roi_scheduler import ROI, ROIScheduler
-from src.utils.schema import AlertSeverity, AlertType, BoundingBox
+from loongguard.motion.frame_diff import MotionRegion
+from loongguard.roi.roi_scheduler import ROI, ROIScheduler
+from loongguard.utils.schema import AlertSeverity, AlertType, BoundingBox
 
 
 # ── 工厂函数 ──────────────────────────────────────────────────

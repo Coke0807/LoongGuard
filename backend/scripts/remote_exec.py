@@ -187,8 +187,8 @@ def cmd_run(executor: RemoteExecutor, args: argparse.Namespace) -> int:
     if ret != 0:
         return ret
 
-    # 启动服务
-    run_cmd = "python -m src.pipeline"
+    # 启动服务（统一入口 run.py）
+    run_cmd = "python run.py"
     if args.config:
         run_cmd += f" {args.config}"
 

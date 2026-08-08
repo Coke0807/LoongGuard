@@ -24,7 +24,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.settings import MotionConfig
-from src.motion.frame_diff import FrameDiffDetector, MotionRegion
+from loongguard.motion.frame_diff import FrameDiffDetector, MotionRegion
 
 
 class TestFrameDiffDetector:

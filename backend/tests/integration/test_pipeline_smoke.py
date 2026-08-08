@@ -28,8 +28,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.settings import AppConfig
-from src.pipeline import Pipeline
-from src.utils.schema import AlertLog, AlertSeverity, AlertType
+from loongguard.pipeline import Pipeline
+from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType
 
 
 # ── Helpers ────────────────────────────────────────────────
@@ -170,7 +170,7 @@ class TestModuleIntegrationSmoke:
     def test_yolo26_loads_model(self) -> None:
         """YOLO26 模型可加载并执行推理"""
         from config.settings import DetectionConfig
-        from src.detection.yolo26_nano import YOLO26Nano
+        from loongguard.detection.yolo26_nano import YOLO26Nano
 
         config = DetectionConfig(
             model_path="models/yolo26_nano_int8.onnx",
@@ -188,7 +188,7 @@ class TestModuleIntegrationSmoke:
     def test_movenet_loads_model(self) -> None:
         """MoveNet 模型可加载并执行推理"""
         from config.settings import PoseConfig
-        from src.pose.movenet import MoveNetLightning
+        from loongguard.pose.movenet import MoveNetLightning
 
         config = PoseConfig(model_path=str(PROJECT_ROOT / "models" / "movenet_lightning_int8.onnx"))
         pose = MoveNetLightning(config)
@@ -201,7 +201,7 @@ class TestModuleIntegrationSmoke:
     def test_sm4_encrypt_decrypt_roundtrip(self, tmp_path) -> None:
         """SM4 CBC 模式加密后数据不可直读，解密后与原始一致"""
         from config.settings import CryptoConfig
-        from src.crypto.sm4_logger import SM4Logger, SM4Mode
+        from loongguard.crypto.sm4_logger import SM4Logger, SM4Mode
 
         key_file = tmp_path / "test_key"
         key_file.write_bytes(b"0123456789abcdef")
@@ -224,7 +224,7 @@ class TestModuleIntegrationSmoke:
     def test_sm4_ecb_roundtrip(self, tmp_path) -> None:
         """SM4 ECB 模式加解密往返验证"""
         from config.settings import CryptoConfig
-        from src.crypto.sm4_logger import SM4Logger, SM4Mode
+        from loongguard.crypto.sm4_logger import SM4Logger, SM4Mode
 
         key_file = tmp_path / "test_key"
         key_file.write_bytes(b"0123456789abcdef")
@@ -242,7 +242,7 @@ class TestModuleIntegrationSmoke:
         """SM4 密钥可通过环境变量 LG_SM4_KEY 加载（hex 编码）"""
         import os
         from config.settings import CryptoConfig
-        from src.crypto.sm4_logger import SM4Logger
+        from loongguard.crypto.sm4_logger import SM4Logger
 
         hex_key = "0123456789abcdef0123456789abcdef"
         # 确保测试不影响其他测试的环境变量
@@ -265,7 +265,7 @@ class TestModuleIntegrationSmoke:
     def test_sm4_cbc_same_plaintext_different_ciphertext(self, tmp_path) -> None:
         """CBC 模式下相同明文每次加密产生不同密文（随机 IV）"""
         from config.settings import CryptoConfig
-        from src.crypto.sm4_logger import SM4Logger, SM4Mode
+        from loongguard.crypto.sm4_logger import SM4Logger, SM4Mode
 
         key_file = tmp_path / "test_key"
         key_file.write_bytes(b"0123456789abcdef")
@@ -284,8 +284,8 @@ class TestModuleIntegrationSmoke:
     def test_sm4_encrypt_and_store(self, tmp_path) -> None:
         """SM4 告警日志加密写入磁盘，文件存在且内容不可直读"""
         from config.settings import CryptoConfig
-        from src.crypto.sm4_logger import SM4Logger
-        from src.utils.schema import AlertLog, AlertType, AlertSeverity
+        from loongguard.crypto.sm4_logger import SM4Logger
+        from loongguard.utils.schema import AlertLog, AlertType, AlertSeverity
 
         key_file = tmp_path / "test_key"
         key_file.write_bytes(b"0123456789abcdef")
