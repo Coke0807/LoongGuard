@@ -18,28 +18,25 @@ authors = [
     {name = "LoongGuard Team"},
 ]
 
-# ── 核心依赖（同步自 requirements.txt） ────────────────────
+# ── 核心运行时依赖（同步自 requirements.txt） ──────────────
+# 设计动机：运行时推理仅依赖 onnxruntime，torch/ultralytics 只在
+# 训练/模型转换阶段使用（GB 级体积），故移入可选依赖组 train，
+# 板端部署安装 requirements_loongarch.txt 即可，无需拖入训练栈。
 dependencies = [
-    # 目标检测
-    "ultralytics>=8.4.0",
-    # 深度学习框架（训练用）
-    "torch>=2.0.0",
     # 推理引擎
     "onnxruntime>=1.16.0",
     # 计算机视觉
     "opencv-python>=4.8.0",
-    # 数据处理
+    # 数值计算
     "numpy>=1.24.0",
-    "pandas>=2.0.0",
     # 国密 SM4 加密
     "gmssl>=3.2.0",
     # 后端 API 服务
     "aiohttp>=3.9.0",
-    # SSH 远程同步
+    # SSH 远程同步 (scripts/sync.py, remote_exec.py)
     "paramiko>=3.3.0",
-    # 可观测性（新增）
+    # Prometheus 监控指标
     "prometheus-client>=0.19.0",
-    "python-json-logger>=2.0.0",
 ]
 
 # ── 可选依赖组 ───────────────────────────────────────────────
@@ -54,15 +51,39 @@ gpu = [
     "onnxruntime-gpu>=1.16.0",
 ]
 
-# ── CLI 入口 ─────────────────────────────────────────────────
-[project.scripts]
-loongguard = "loongguard.pipeline:main"
-
 # ── Pytest 配置 ──────────────────────────────────────────────
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-v --tb=short"
+
+# ── Ruff 代码检查配置 ────────────────────────────────────────
+# 规则集说明：
+#   E/W  pycodestyle 风格问题
+#   F    pyflakes 逻辑错误（未定义名、未使用导入等）
+#   I    isort 导入排序
+#   B    flake8-bugbear 常见 bug 模式
+#   UP   pyupgrade 语法现代化（目标 py311）
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests", "scripts", "."]
+extend-exclude = ["models", "deploy"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP"]
+ignore = [
+    # run.py/scripts/tests 普遍采用 sys.path.insert 后再导入的启动模式，
+    # E402 对这类结构性场景是误报
+    "E402",
+    # UP042 (str,Enum) -> StrEnum 会改变 str()/format() 序列化行为，
+    # 涉及 API/DB 序列化路径，收益低风险高，保持现状
+    "UP042",
+]
+
+[tool.ruff.lint.isort]
+# 与现有代码风格一致：第三方库后空一行再导入本地包
+known-first-party = ["loongguard", "config"]
 
 # ── Setuptools 包发现 ────────────────────────────────────────
 [tool.setuptools.packages.find]

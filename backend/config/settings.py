@@ -14,7 +14,6 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -47,12 +46,12 @@ class CameraConfig:
 class DetectionConfig:
     """YOLO26-Nano 目标检测参数"""
 
-    # ONNX 模型路径
-    model_path: str = str(_DEFAULT_MODEL_DIR / "yolo26_nano_int8.onnx")
+    # ONNX 模型路径（与 config/default.json 保持一致）
+    model_path: str = str(_DEFAULT_MODEL_DIR / "best.onnx")
     # 输入尺寸（正方形）
     input_size: int = 640
     # 置信度阈值（与 config/default.json 保持一致）
-    conf_threshold: float = 0.30
+    conf_threshold: float = 0.80
     # NMS-Free 设计下不使用 IoU 阈值，此处保留用于未来扩展
     iou_threshold: float = 0.50
     # INT8 量化标志（与 config/default.json 保持一致）
@@ -61,16 +60,10 @@ class DetectionConfig:
     backend: str = "onnxruntime"
     # OpenCL 设备索引（LG200）
     opencl_device_id: int = 0
-    # 检测类别（危险物品）
+    # 检测类别（危险物品），后续可能新增 person 类
     classes: list[str] = field(default_factory=lambda: [
-        "magnetic_bead",      # 磁力珠
-        "button_battery",     # 纽扣电池
-        "scissors",           # 剪刀
+        "scissor",            # 剪刀
         "utility_knife",      # 美工刀
-        "needle",             # 别针/针
-        "glass_shard",        # 碎玻璃
-        "wire",               # 铁丝/细金属
-        "small_toy_part",     # 微小玩具零件
     ])
 
 
@@ -127,25 +120,33 @@ class MotionConfig:
 @dataclass
 class FaceConfig:
     """
-    人脸检测配置（跨平台预留）
+    人脸检测配置（ONNX 实现已就绪）
 
-    睡姿监测依赖"Person bbox 内无 Face -> 异常睡姿"判定。
-    板端人脸模型权重尚未补充，当前默认 backend="dummy" 使用桩实现，
-    保证 Windows 开发与 MVP 链路不阻塞。接入真实模型时：
-        1. 将 ONNX 权重放入 backend/models/
-        2. 设置 backend="onnx" 与 model_path
+    睡姿监测依赖"画面有运动主体但未检测到人脸 -> 异常睡姿"判定。
+    默认使用 buffalo_l/det_10g.onnx（InsightFace RetinaFace）模型。
+
+    默认关闭（enabled=false）：
+        通过环境变量 LG_FACE_ENABLED=true 启用。
+        启用后 pipeline 对每帧执行人脸检测，结果用于睡姿监测。
     """
 
-    # 检测后端：dummy（桩，默认）/ onnx（真实模型，板端接入）
-    backend: str = "dummy"
-    # ONNX 人脸模型路径
-    model_path: str = str(_DEFAULT_MODEL_DIR / "face_detector.onnx")
+    # 检测后端：dummy（桩）/ onnx（真实模型，默认启用）
+    backend: str = "onnx"
+    # ONNX 人脸模型路径（默认使用 buffalo_l/det_10g.onnx）
+    model_path: str = str(_DEFAULT_MODEL_DIR / "buffalo_l" / "det_10g.onnx")
     # 置信度阈值
     conf_threshold: float = 0.5
     # 是否启用睡姿（人脸可见性）监测；关闭时 pipeline 不执行该逻辑
     enabled: bool = False
     # 定义 YOLO 检测结果中"人"类别名（用于 Person+Face 组合判定）
     person_class: str = "person"
+    # 头部姿态：侧脸判定阈值（双眼距/脸高 低于此值视为侧脸）
+    # 经验值 0.6（实测正脸 0.72~1.07，侧脸 0.04~0.59）
+    side_yaw_threshold: float = 0.6
+    # 头部姿态：面内倾斜判定阈值（|roll| 度）
+    roll_threshold: float = 45.0
+    # 睡姿告警：连续 N 帧未检测到人脸才触发（防单帧漏检误报）
+    not_visible_frames_threshold: int = 30
 
 
 @dataclass
@@ -216,6 +217,12 @@ class APIConfig:
     alerts_path: str = "/api/v1/alerts"
     # Basic Auth 认证（通过 LG_API_AUTH_ENABLED=true 启用）
     auth_enabled: bool = False
+    # 速率限制：每客户端 IP 每秒允许的请求数（令牌桶填充速率）
+    # 设计动机：局域网部署无 WAF/反向代理，需在应用层防暴力请求。
+    # 默认 20 rps 远高于正常管理端使用强度，仅抑制扫描/暴力破解。
+    rate_limit_rps: float = 20.0
+    # 令牌桶容量（允许的突发请求数）
+    rate_limit_burst: float = 60.0
 
 
 @dataclass
@@ -265,6 +272,29 @@ class DedupConfig:
     position_grid_size: int = 50
     # 最大跟踪对象数（防止内存泄漏）
     max_tracked_objects: int = 1000
+
+
+@dataclass
+class PersistenceConfig:
+    """物体持续出现跟踪配置
+
+    设计动机：
+        与 DedupConfig 互补——DedupConfig 控制"已触发告警的重复抑制"，
+        而 PersistenceConfig 控制"首次触发告警前物体需稳定出现的时间"。
+        两者共同构成完整的告警防误报策略。
+
+    环境变量覆盖：
+        LG_PERSISTENCE_PERSISTENCE_SEC=1.0    # 物体需持续出现的最小秒数
+        LG_PERSISTENCE_MAX_MISSED_SEC=0.5     # 物体消失超过此秒数则移除跟踪
+        LG_PERSISTENCE_POSITION_GRID_SIZE=50  # 位置网格量化粒度（像素）
+    """
+
+    # 物体需持续出现的最小秒数，达到此值才允许报警
+    persistence_sec: float = 1.0
+    # 物体消失超过此秒数则移除跟踪记录
+    max_missed_sec: float = 0.5
+    # 位置网格量化粒度（像素），用于生成跟踪 key
+    position_grid_size: int = 50
 
 
 @dataclass
@@ -323,6 +353,7 @@ class AppConfig:
     log: LogConfig = field(default_factory=LogConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     dedup: DedupConfig = field(default_factory=DedupConfig)
+    persistence: PersistenceConfig = field(default_factory=PersistenceConfig)
     retention: RetentionConfig = field(default_factory=RetentionConfig)
     notify: NotificationConfig = field(default_factory=NotificationConfig)
     # 运行环境：development / testing / production（由 LG_ENV 注入）
@@ -333,7 +364,7 @@ class AppConfig:
     debug: bool = False
 
 
-def load_config(source: Optional[str] = None) -> AppConfig:
+def load_config(source: str | None = None) -> AppConfig:
     """
     加载配置。
 
@@ -429,7 +460,7 @@ def validate_config(config: AppConfig) -> list[str]:
     return errors
 
 
-def _load_dotenv(dotenv_path: Optional[Path | str] = None) -> None:
+def _load_dotenv(dotenv_path: Path | str | None = None) -> None:
     """
     极简 .env 加载器（零第三方依赖）。
 
@@ -440,7 +471,9 @@ def _load_dotenv(dotenv_path: Optional[Path | str] = None) -> None:
 
     同时检测文件内重复 KEY 并告警，避免"后值覆盖前值"的隐性 bug。
     """
-    path = Path(dotenv_path) if dotenv_path else Path(__file__).parent.parent / ".env"
+    # 默认读取"项目根目录 .env"（前后端统一，单一配置源）
+    # __file__ -> backend/config/settings.py，parents[2] 即项目根目录
+    path = Path(dotenv_path) if dotenv_path else Path(__file__).resolve().parents[2] / ".env"
     if not path.exists():
         return
 

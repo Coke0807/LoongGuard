@@ -1,4 +1,16 @@
-PyQt6==6.8.1
+# LoongGuard 前端依赖清单
+#
+# 平台说明：
+#   - Windows 开发机：pip 安装全部依赖（PyQt6 从 pypi.org 获取）
+#   - 龙芯板端（Loongnix 25）：PyQt6 改用系统包，见下方注释；
+#     lpypi 上 PyQt6 仅有 6.9.0 的 loongarch64 wheel，且其运行时依赖
+#     PyQt6-Qt6 / PyQt6-sip 无龙芯 wheel，pip 安装必然失败，
+#     必须走 apt + --system-site-packages 方案（详见 docs/02-部署与容器/
+#     龙芯2K3000手动部署文档.md 第 6 节）
+
+# PyQt6 仅 Windows 开发机 pip 安装；板端执行 sudo apt install python3-pyqt6
+PyQt6>=6.8.1; sys_platform == "win32"
+
 opencv-python>=4.8.0
 numpy>=1.24.0
 aiohttp>=3.9.0

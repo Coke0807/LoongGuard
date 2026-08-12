@@ -7,11 +7,12 @@
         "pixel_format": "MJPG"
     },
     "detection": {
-        "model_path": "models/yolo26_nano_int8.onnx",
+        "model_path": "models/best.onnx",
         "input_size": 640,
-        "conf_threshold": 0.30,
+        "conf_threshold": 0.80,
         "quantized": false,
-        "backend": "onnxruntime"
+        "backend": "onnxruntime",
+        "classes": ["scissor", "utility_knife"]
     },
     "pose": {
         "input_size": 192,
@@ -33,12 +34,20 @@
         "blur_kernel_size": 5,
         "dilate_kernel_size": 7
     },
+    "persistence": {
+        "persistence_sec": 1.0,
+        "max_missed_sec": 0.5,
+        "position_grid_size": 50
+    },
     "face": {
-        "backend": "dummy",
-        "model_path": "models/face_detector.onnx",
+        "backend": "onnx",
+        "model_path": "models/buffalo_l/det_10g.onnx",
         "conf_threshold": 0.5,
         "enabled": false,
-        "person_class": "person"
+        "person_class": "person",
+        "side_yaw_threshold": 0.6,
+        "roll_threshold": 45.0,
+        "not_visible_frames_threshold": 30
     },
     "media": {
         "audio_backend": "command",

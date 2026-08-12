@@ -37,7 +37,7 @@ def detection_config():
     """返回测试用的检测配置（路径指向 models/ 目录下模型）"""
     from config.settings import DetectionConfig
     return DetectionConfig(
-        model_path=str(PROJECT_ROOT / "models" / "yolo26_nano_int8.onnx"),
+        model_path=str(PROJECT_ROOT / "models" / "best.onnx"),
         input_size=640,
         conf_threshold=0.5,
         quantized=False,
@@ -56,7 +56,7 @@ def app_config():
     """返回完整的测试用配置（使用真实 dummy 模型路径）"""
     from config.settings import AppConfig
     config = AppConfig()
-    config.detection.model_path = str(PROJECT_ROOT / "models" / "yolo26_nano_int8.onnx")
+    config.detection.model_path = str(PROJECT_ROOT / "models" / "best.onnx")
     config.detection.input_size = 640
     config.debug = True
     return config

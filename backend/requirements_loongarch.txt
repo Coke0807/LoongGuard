@@ -1,24 +1,36 @@
-# LoongGuard 运行时最小依赖清单
-# 仅包含部署运行必需的包，排除训练/测试相关依赖
-# 目标 Python 版本: 3.12.x
+# LoongGuard 板端运行时依赖清单
+# 目标平台: 龙芯 2K3000 / Loongnix 25 桌面版（LoongArch64, glibc>=2.38）
+# 目标 Python: 3.13.5（Loongnix 25 系统自带）
+# pip 源: https://lpypi.loongnix.cn/loongson/pypi/+simple（set-pip.sh 自动配置）
+#
+# 版本验证方式（2026-08-26 实测）：
+#   使用 pip download --platform manylinux_2_38_loongarch64 --python-version 313
+#   逐包在 lpypi 上解析，核心三件套与板上历史安装记录（loongnix安装insightface.txt）
+#   完全一致：onnxruntime==1.22.1 + numpy==2.2.6 + opencv-python==4.12.0.88
+#
+# ⚠️ 安装前置：gmssl 的传递依赖 pycryptodomex 在 lpypi 仅有源码包（无预编译
+#    wheel），pip 会自动编译安装，需先执行：
+#      sudo apt install gcc python3-dev
+#    （已验证 gmssl.sm4 模块本身不调用 pycryptodomex，若编译失败可用
+#     pip install gmssl==3.2.2 --no-deps 降级安装，SM4 功能不受影响）
 
-# ── 推理引擎 ──────────────────────────────────────────────
-onnxruntime>=1.16.0             # ONNX 模型推理引擎，YOLO26-Nano 核心组件
+# ── 推理引擎（龙芯构建 wheel，实测最新可用 1.22.x）──────────
+onnxruntime==1.22.1              # cp313 manylinux_2_38_loongarch64
 
-# ── 数值计算 ──────────────────────────────────────────────
-numpy>=1.24.0                   # 数值计算基础库
+# ── 数值计算（与 onnxruntime 1.22.1 组合实测解析版本）───────
+numpy==2.2.6                     # cp313 manylinux_2_38_loongarch64
 
-# ── 国密 SM4 加密 ─────────────────────────────────────────
-gmssl>=3.2.0                    # SM4 国密算法实现，告警日志/风险切片加密
+# ── 计算机视觉（cp37-abi3 稳定 ABI wheel，兼容 Python 3.13）─
+opencv-python==4.12.0.88         # manylinux_2_38_loongarch64
 
-# ── 后端 API 服务 ─────────────────────────────────────────
-aiohttp>=3.9.0                  # 异步 HTTP 服务器 (REST + WebSocket + MJPEG)
+# ── 国密 SM4 加密（纯 Python；板端仅 3.2.2 可用）────────────
+gmssl==3.2.2                     # py3-none-any
 
-# ── 计算机视觉 ────────────────────────────────────────────
-opencv-python>=4.8.0            # 图像处理 / 视频采集 / 格式转换
+# ── 后端 API 服务（龙芯 wheel 从 3.12.13 起提供）────────────
+aiohttp>=3.12.13                 # 实测解析至 3.13.5
 
-# ── SSH 远程同步 ──────────────────────────────────────────
-paramiko>=3.3.0                 # SSH/SFTP 同步到龙芯主机
+# ── Prometheus 监控（纯 Python）─────────────────────────────
+prometheus_client>=0.19.0        # py3-none-any
 
-# ── Prometheus 监控 ─────────────────────────────────
-prometheus_client>=0.19.0
+# ── SSH 远程同步（纯 Python；仅开发机 sync.py 使用，板端可选）─
+# paramiko>=3.3.0

@@ -27,7 +27,7 @@ from loongguard.detection.yolo26_nano import YOLO26Nano
 from loongguard.utils.schema import BoundingBox
 
 # 模型路径
-YOLO_MODEL_PATH = str(PROJECT_ROOT / "models" / "yolo26_nano_int8.onnx")
+YOLO_MODEL_PATH = str(PROJECT_ROOT / "models" / "best.onnx")
 
 
 # ═══════════════════════════════════════════════════════════════

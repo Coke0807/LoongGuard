@@ -150,7 +150,7 @@ class TestSelectProviders:
 class TestCreateSession:
     """create_session() 完整流程(需要真实模型文件)"""
 
-    YOLO_MODEL = str(PROJECT_ROOT / "models" / "yolo26_nano_int8.onnx")
+    YOLO_MODEL = str(PROJECT_ROOT / "models" / "best.onnx")
 
     def test_creates_session_from_real_model(self) -> None:
         """从真实模型创建 Session 应成功"""

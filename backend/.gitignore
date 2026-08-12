@@ -22,22 +22,6 @@
 # 运行时产物 (可重新生成, 非开发必需)
 # ──────────────────────────────────────────────
 
-# ── 模型等大体积二进制文件（不入库，独立渠道分发）──
-# 模型权重、中间产物、视频素材均在独立渠道分发，避免仓库膨胀
-models/*.onnx
-models/*.pt
-models/*.pth
-models/*.tflite
-models/*.pb
-models/*.engine
-models/*.video
-models/*.mp4
-models/*.avi
-models/*.mov
-models/*.mkv
-models/*.webm
-models/tmp/
-models/.cache/
 
 # 运行时日志 (server 进程 stdout/stderr 重定向)
 server_*.log
@@ -133,24 +117,3 @@ temp/
 pip-log.txt
 pip-delete-this-directory.txt
 
-
-# ============================================================
-# 提交范围说明（models/ 大文件已排除，见上方过滤策略）
-# ============================================================
-#
-# [排除 - 大文件，独立渠道分发]
-#   models/*.onnx / *.pt / *.mp4 等  -> 请一并放入独立分发包（网盘/内网共享）
-#   已入库的历史模型文件需执行 git rm --cached 后重新提交以解除跟踪
-#
-# [视频素材 - 明确提交]
-#   tests/mock_classroom.mp4           - 冒烟测试合成视频
-#   tests/fixtures/*.mp4               - 真实幼儿园素材（效果回归）
-#   datasets/raw/*.mp4 / *.avi / *.mov / *.mkv - 训练数据集原始视频
-#
-# [目录占位 - 明确提交]
-#   datasets/raw/.gitkeep      - 保持空目录结构
-#
-# [数据集配置 - 通过 ! 规则排除忽略]
-#   datasets/processed/data.yaml - 数据集配置文件
-#
-# 以上文件均不受本 .gitignore 排除, 会正常纳入版本控制。

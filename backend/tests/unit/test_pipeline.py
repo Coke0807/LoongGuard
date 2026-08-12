@@ -74,7 +74,7 @@ def app_config(monkeypatch) -> AppConfig:
     monkeypatch.setenv("LG_SM4_KEY", "0123456789abcdef0123456789abcdef")
     config = AppConfig()
     config.camera.device = "tests/mock_classroom.mp4"
-    config.detection.model_path = "models/yolo26_nano_int8.onnx"
+    config.detection.model_path = "models/best.onnx"
     config.detection.input_size = 640
     config.pose.model_path = "models/movenet_lightning_int8.onnx"
     config.api.port = _find_free_port()

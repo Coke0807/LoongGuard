@@ -1,0 +1,86 @@
+python版本3.13.5 （Loongnix-25.1.rc1系统自带）
+预编译文件（.whl）网址：https://lpypi.loongnix.cn/loongson/pypi
+1.安装虚拟环境
+	sudo apt-get install python3-venv python3-full
+	设置虚拟环境 python3 -m venv py313
+	进入虚拟环境 source ./py313/bin/activate
+2.配置pip仓库（参考https://docs.loongnix.cn/python/python.html）
+	wget https://cloud.loongnix.cn/releases/loongarch64/python/set-pip.sh
+	chmod +x set-pip.sh
+	# 为当前用户添加配置
+	./set-pip.sh 
+	# 为所有用户添加配置（需要 sudo 权限）
+	./set-pip.sh -g
+	# 更新 pip 工具
+	pip3 install -U pip
+3.安装onnx
+	pip install numpy==2.2.6
+	pip install ml_dtypes==0.5.4
+	pip install onnx==1.19.1
+	pip install onnxruntime==1.22.1
+4.安装insightface
+	（1）pip install matplotlib==3.11.0
+		pip install opencv-python==4.12.0.88
+		pip install scipy==1.18.0
+		pip install scikit-learn==1.9.0
+	（2）源码安装scikit-image
+		pip install meson-python ninja cython
+		pip install pythran==0.19.0 （备注：pip install pythran  --only-binary=:all: --dry-run可以查看是否有预编译包.whl）
+	    下载https://github.com/scikit-image/scikit-image/releases?page=1#release-v0.26.0
+		tar -zxvf scikit-image-0.26.0.tar.gz
+		cd scikit-image-0.26.0/
+		meson setup build
+		meson compile -C build
+		meson install -C build  （选项选y）
+		cp -r /usr/local/lib/python3/dist-packages/skimage/ /home/lzhh/下载/yolo/lib/python3.13/site-packages(手动挪到虚拟环境所在安装路径)
+		pip install lazy-loader==0.5
+	（3）
+		pip install tqdm==4.70.0 requests==2.34.2
+		pip install insightface==1.0.1 --no-deps
+5.备注：如有缺包，按照以下版本查缺补漏
+	beniget            0.5.0
+	certifi            2026.7.22
+	charset-normalizer 3.5.1
+	coloredlogs        15.0.1
+	contourpy          1.3.3
+	cycler             0.12.1
+	Cython             3.2.9
+	flatbuffers        25.12.19
+	fonttools          4.63.0
+	gast               0.7.0
+	humanfriendly      10.0
+	idna               3.19
+	insightface        1.0.1
+	joblib             1.5.3
+	kiwisolver         1.5.0
+	lazy-loader        0.5
+	matplotlib         3.11.0
+	meson              1.12.0
+	meson-python       0.20.0
+	ml_dtypes          0.5.4
+	mpmath             1.3.0
+	narwhals           2.25.0
+	ninja              1.13.0
+	numpy              2.2.6
+	onnx               1.19.1
+	onnxruntime        1.22.1
+	opencv-python      4.12.0.88
+	packaging          26.3
+	pillow             12.3.0
+	pip                26.2.1
+	ply                3.11
+	protobuf           7.36.0
+	pyparsing          3.3.2
+	pyproject-metadata 0.12.1
+	python-dateutil    2.9.0.post0
+	pythran            0.19.0
+	requests           2.34.2
+	scikit-learn       1.9.0
+	scipy              1.18.0
+	setuptools         84.0.0
+	six                1.17.0
+	sympy              1.14.0
+	threadpoolctl      3.6.0
+	tqdm               4.70.0
+	typing_extensions  4.16.0
+	urllib3            2.7.0

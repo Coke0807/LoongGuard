@@ -212,7 +212,7 @@ for frame in range(TOTAL_FRAMES):
         # Draw a sleep mat
         mat_x = int(cx - 50)
         mat_y = int(HEIGHT * 0.75)
-        cv2.ellipse(canvas, (mat_x, mat_y), (55, 12), COLORS["mat"], -1)
+        cv2.ellipse(canvas, (mat_x, mat_y), (55, 12), 0, 0, 360, COLORS["mat"], -1)
 
         draw_scene_label(canvas, "Scene 2: Child prone sleeping (MoveNet pose estimation)")
         draw_prone_person(canvas, cx + int(sway), cy, 1.1, COLORS["shirt_red"], head_dir=1)

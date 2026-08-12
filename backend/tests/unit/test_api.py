@@ -329,7 +329,7 @@ class TestHealthEndpoints:
         srv, base_url = server
         srv.set_detection_health_provider(lambda: {
             "available": True,
-            "model_path": "models/yolo26_nano_int8.onnx",
+            "model_path": "models/best.onnx",
             "input_size": 640,
             "conf_threshold": 0.3,
             "last_inference_ts": 99.9,

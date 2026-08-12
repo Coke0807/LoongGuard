@@ -42,3 +42,4 @@ root@tjdz-pc:~# docker images
 REPOSITORY                TAG     IMAGE ID       CREATED      SIZE
 cr.loongnix.cn/library/debian  buster  abcf73d8d8ba  8 months ago  120MB
 ```
+

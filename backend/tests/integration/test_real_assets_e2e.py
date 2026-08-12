@@ -62,7 +62,7 @@ class TestRealAssetPipeline:
 
         config = AppConfig()
         config.camera.device = str(video_path)
-        config.detection.model_path = str(PROJECT_ROOT / "models" / "yolo26_nano_int8.onnx")
+        config.detection.model_path = str(PROJECT_ROOT / "models" / "best.onnx")
         config.detection.input_size = 640
         config.pose.model_path = str(PROJECT_ROOT / "models" / "movenet_lightning_int8.onnx")
         config.crypto.log_dir = str(tmp_path / "logs")

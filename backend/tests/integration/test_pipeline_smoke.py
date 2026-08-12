@@ -58,7 +58,7 @@ def smoke_config(tmp_path, monkeypatch) -> AppConfig:
 
     config = AppConfig()
     config.camera.device = "tests/mock_classroom.mp4"
-    config.detection.model_path = "models/yolo26_nano_int8.onnx"
+    config.detection.model_path = "models/best.onnx"
     config.detection.input_size = 640
     config.pose.model_path = "models/movenet_lightning_int8.onnx"
     config.crypto.key_file = "config/.sm4_key"
@@ -173,7 +173,7 @@ class TestModuleIntegrationSmoke:
         from loongguard.detection.yolo26_nano import YOLO26Nano
 
         config = DetectionConfig(
-            model_path="models/yolo26_nano_int8.onnx",
+            model_path="models/best.onnx",
             input_size=640,
             conf_threshold=0.5,
             quantized=False,
