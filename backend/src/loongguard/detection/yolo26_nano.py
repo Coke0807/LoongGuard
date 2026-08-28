@@ -15,19 +15,18 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
 
 import numpy as np
 
 from config import DetectionConfig
-from loongguard.detection.inference_onnx import LoongONNXPredictor
-from loongguard.utils.schema import BoundingBox
 from loongguard.api.metrics import (
     DETECTION_AVAILABLE,
     DETECTION_ERROR_COUNT,
     DETECTION_INFERENCE_COUNT,
     INFERENCE_LATENCY,
 )
+from loongguard.detection.inference_onnx import LoongONNXPredictor
+from loongguard.utils.schema import BoundingBox
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +46,7 @@ class YOLO26Nano:
 
     def __init__(self, config: DetectionConfig) -> None:
         self._config = config
-        self._predictor: Optional[LoongONNXPredictor] = None
+        self._predictor: LoongONNXPredictor | None = None
 
         # ── 健康状态（供 /health/detection 端点查询）───────────
         self._available: bool = False

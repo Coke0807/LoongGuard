@@ -16,9 +16,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-import pytest
 
-from loongguard.utils import onnx_session
 from loongguard.utils.onnx_session import (
     _INTRA_OP_THREADS_ENV,
     _default_intra_op_threads,
@@ -26,7 +24,6 @@ from loongguard.utils.onnx_session import (
     create_session_options,
     select_providers,
 )
-
 
 # ── _default_intra_op_threads 自适应 ──────────────────────────
 
@@ -100,7 +97,6 @@ class TestCreateSessionOptions:
 
     def test_intra_op_threads_default_applied(self) -> None:
         """未指定线程数时使用自适应值"""
-        import onnxruntime as ort
         opts = create_session_options()
         # 自适应:8 核 → 4 线程
         assert opts.intra_op_num_threads >= 1
@@ -164,7 +160,6 @@ class TestCreateSession:
 
     def test_custom_session_options_applied(self) -> None:
         """自定义 SessionOptions 应被应用"""
-        import onnxruntime as ort
 
         opts = create_session_options(intra_op_threads=2)
         session = create_session(self.YOLO_MODEL, session_options=opts)

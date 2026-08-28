@@ -15,10 +15,8 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +49,7 @@ class VideoRetentionManager:
         self._max_age_hours = config.max_age_hours
         self._max_total_size_bytes = int(config.max_total_size_mb * 1024 * 1024)
 
-    def cleanup(self, active_files: Optional[set[str]] = None) -> dict:
+    def cleanup(self, active_files: set[str] | None = None) -> dict:
         """
         执行一次清理。
 
@@ -91,7 +89,7 @@ class VideoRetentionManager:
         current_size = self._get_dir_size()
         if current_size > self._max_total_size_bytes:
             remaining_files = self._get_upload_files()
-            for file_path, mtime, size in remaining_files:
+            for file_path, _, size in remaining_files:
                 if current_size <= self._max_total_size_bytes:
                     break
                 if str(file_path) in active:

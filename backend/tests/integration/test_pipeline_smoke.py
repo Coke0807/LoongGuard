@@ -31,7 +31,6 @@ from config.settings import AppConfig
 from loongguard.pipeline import Pipeline
 from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType
 
-
 # ── Helpers ────────────────────────────────────────────────
 
 
@@ -123,7 +122,7 @@ class TestPipelineSmoke:
             await pipeline.start()
             try:
                 await asyncio.wait_for(pipeline.run(), timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             await pipeline.stop()
 
@@ -241,6 +240,7 @@ class TestModuleIntegrationSmoke:
     def test_sm4_env_key_loading(self, tmp_path) -> None:
         """SM4 密钥可通过环境变量 LG_SM4_KEY 加载（hex 编码）"""
         import os
+
         from config.settings import CryptoConfig
         from loongguard.crypto.sm4_logger import SM4Logger
 
@@ -285,7 +285,7 @@ class TestModuleIntegrationSmoke:
         """SM4 告警日志加密写入磁盘，文件存在且内容不可直读"""
         from config.settings import CryptoConfig
         from loongguard.crypto.sm4_logger import SM4Logger
-        from loongguard.utils.schema import AlertLog, AlertType, AlertSeverity
+        from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType
 
         key_file = tmp_path / "test_key"
         key_file.write_bytes(b"0123456789abcdef")
@@ -329,6 +329,7 @@ class TestModuleIntegrationSmoke:
     def test_config_env_override(self) -> None:
         """LG_ 前缀环境变量可覆盖配置值"""
         import os
+
         from config.settings import load_config
 
         old_port = os.environ.pop("LG_API_PORT", None)

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -377,6 +377,7 @@ class TestOpenCLBackendVerification:
     def test_movenet_session_provider_priority(self) -> None:
         """MoveNet 加载后，session 的实际 provider 符合优先级预期"""
         import onnxruntime as ort
+
         from config.settings import PoseConfig
 
         config = PoseConfig(model_path="models/movenet_lightning_int8.onnx")

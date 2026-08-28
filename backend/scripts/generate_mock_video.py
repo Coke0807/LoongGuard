@@ -12,10 +12,11 @@ Output:
     tests/mock_classroom.mp4 (640x480, 25 FPS, ~12 seconds)
 """
 
-import cv2
-import numpy as np
 import math
 import os
+
+import cv2
+import numpy as np
 
 # ── Config ──────────────────────────────────────────────────────────────
 WIDTH, HEIGHT = 640, 480

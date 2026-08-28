@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import threading
 from collections import deque
-from typing import Optional
 
 import numpy as np
 
@@ -28,7 +27,7 @@ class FrameBuffer:
 
     def __init__(self, max_debug_frames: int = 0) -> None:
         self._lock = threading.Lock()
-        self._prev_frame: Optional[Frame] = None
+        self._prev_frame: Frame | None = None
         self._debug_mode = max_debug_frames > 0
         self._debug_frames: deque[Frame] = deque(
             maxlen=max_debug_frames if max_debug_frames > 0 else 1
@@ -50,12 +49,12 @@ class FrameBuffer:
                 old.release()
 
     @property
-    def prev_frame(self) -> Optional[Frame]:
+    def prev_frame(self) -> Frame | None:
         """获取上一帧（运动检测用）"""
         with self._lock:
             return self._prev_frame
 
-    def get_prev_gray(self) -> Optional[np.ndarray]:
+    def get_prev_gray(self) -> np.ndarray | None:
         """
         获取上一帧的灰度版本（用于帧差分）
 

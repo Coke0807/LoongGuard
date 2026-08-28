@@ -20,7 +20,6 @@ from loongguard.motion.frame_diff import MotionRegion
 from loongguard.roi.roi_scheduler import ROI, ROIScheduler
 from loongguard.utils.schema import AlertSeverity, AlertType, BoundingBox
 
-
 # ── 工厂函数 ──────────────────────────────────────────────────
 
 
@@ -87,16 +86,31 @@ class TestROISchedulerProcess:
         assert alerts == []
         mock_det.infer_stage1.assert_not_called()
 
-    def test_stage1_empty_skips_stage2(self):
-        """第一级粗筛无结果时，不应调用第二级"""
-        scheduler, mock_det = _make_scheduler(stage1_results=[])
+    def test_stage1_empty_falls_back_to_stage2(self):
+        """stage1 无结果时，应调用 stage2 兜底检测"""
+        scheduler, mock_det = _make_scheduler(stage1_results=[], stage2_results=[])
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         region = _make_motion_region(x=100, y=100, w=50, h=50)
 
         alerts = scheduler.process(frame, [region])
         assert alerts == []
         mock_det.infer_stage1.assert_called_once()
-        mock_det.infer_stage2.assert_not_called()
+        # 新行为：stage1 无结果时用 stage2 在 ROI 裁剪上做全分辨率兜底
+        mock_det.infer_stage2.assert_called_once()
+
+    def test_stage1_empty_stage2_fallback_produces_alert(self):
+        """stage1 漏检但 stage2 兜底检出时，应生成告警"""
+        stage2_bbox = _make_bbox(class_name="scissors", confidence=0.9)
+        scheduler, mock_det = _make_scheduler(
+            stage1_results=[], stage2_results=[stage2_bbox]
+        )
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        region = _make_motion_region(x=100, y=100, w=200, h=200)
+
+        alerts = scheduler.process(frame, [region])
+        assert len(alerts) == 1
+        assert alerts[0].alert_type == AlertType.DANGEROUS_OBJECT
+        assert alerts[0].detections[0].class_name == "scissors"
 
     def test_stage1_and_stage2_produce_alerts(self):
         """两级检测均有结果时，应生成告警（stage2 在 stage1 检测框扩展区域上执行）"""

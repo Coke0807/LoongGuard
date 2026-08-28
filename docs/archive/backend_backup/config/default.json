@@ -1,0 +1,48 @@
+{
+    "camera": {
+        "device": "0",
+        "width": 640,
+        "height": 480,
+        "fps": 30,
+        "pixel_format": "MJPG"
+    },
+    "detection": {
+        "model_path": "models/yolo26_nano_int8.onnx",
+        "input_size": 640,
+        "conf_threshold": 0.30,
+        "quantized": false,
+        "backend": "onnxruntime"
+    },
+    "pose": {
+        "input_size": 192,
+        "min_keypoint_score": 0.3,
+        "prone_angle_threshold": 30.0,
+        "prone_frame_threshold": 30,
+        "inference_interval": 3
+    },
+    "roi": {
+        "stage1_input_size": 320,
+        "stage2_input_size": 640,
+        "roi_expand_pixels": 30,
+        "min_roi_area": 2500,
+        "max_rois_per_frame": 5
+    },
+    "motion": {
+        "diff_threshold": 25,
+        "motion_ratio_threshold": 0.005,
+        "blur_kernel_size": 5,
+        "dilate_kernel_size": 7
+    },
+    "alarm": {
+        "buzzer_pin": 18,
+        "led_pin": 23,
+        "alarm_duration_sec": 5.0,
+        "cooldown_sec": 30.0
+    },
+    "api": {
+        "host": "0.0.0.0",
+        "port": 8080
+    },
+    "log_level": "INFO",
+    "debug": false
+}

@@ -13,15 +13,13 @@ LoongGuard 告警数据库持久层
 
 from __future__ import annotations
 
-import sqlite3
 import logging
+import sqlite3
 import threading
-from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
-from loongguard.utils.schema import AlertLog, BoundingBox
+from loongguard.utils.schema import AlertLog
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +93,7 @@ class AlertDatabase:
 
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
-        self._conn: Optional[sqlite3.Connection] = None
+        self._conn: sqlite3.Connection | None = None
         # 并发安全：SQLite 连接可能被主线程与 asyncio.to_thread 工作线程共享
         # （审计写入 / 清理 / 备份），故放宽线程绑定并加锁串行化访问。
         self._lock = threading.Lock()
@@ -248,11 +246,11 @@ class AlertDatabase:
         self,
         page: int = 1,
         page_size: int = 20,
-        severity: Optional[str] = None,
-        alert_type: Optional[str] = None,
-        acknowledged: Optional[bool] = None,
-        start_time: Optional[str] = None,
-        end_time: Optional[str] = None,
+        severity: str | None = None,
+        alert_type: str | None = None,
+        acknowledged: bool | None = None,
+        start_time: str | None = None,
+        end_time: str | None = None,
     ) -> dict:
         """
         分页查询告警列表，支持多维度过滤。
@@ -306,7 +304,7 @@ class AlertDatabase:
         }
 
     @_synchronized
-    def get_alert_by_id(self, alert_id: str) -> Optional[dict]:
+    def get_alert_by_id(self, alert_id: str) -> dict | None:
         """根据 alert_id 查询单条告警（含 detections），未找到返回 None。"""
         row = self._conn.execute(
             "SELECT * FROM alerts WHERE alert_id = ?", (alert_id,)
@@ -356,7 +354,7 @@ class AlertDatabase:
         外键 CASCADE 自动级联删除关联的 detections。
         返回删除的告警条数。
         """
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=retention_days)).isoformat()
         cursor = self._conn.execute(
             "DELETE FROM alerts WHERE timestamp < ?", (cutoff,)
         )

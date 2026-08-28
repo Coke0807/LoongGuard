@@ -26,7 +26,6 @@ import time
 from pathlib import Path
 
 import cv2
-import numpy as np
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -37,16 +36,6 @@ from loongguard.camera.v4l2_capture import V4L2Capture
 from loongguard.detection.yolo26_nano import YOLO26Nano
 from loongguard.motion.frame_diff import FrameDiffDetector
 from loongguard.pose.movenet import MoveNetLightning
-from loongguard.api.metrics import (
-    DETECTION_AVAILABLE,
-    DETECTION_INFERENCE_COUNT,
-    DETECTION_ERROR_COUNT,
-    POSE_AVAILABLE,
-    POSE_INFERENCE_COUNT,
-    POSE_ERROR_COUNT,
-    INFERENCE_LATENCY,
-    POSE_INFERENCE_LATENCY,
-)
 
 
 def main() -> int:

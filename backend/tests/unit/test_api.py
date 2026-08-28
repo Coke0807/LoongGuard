@@ -17,6 +17,7 @@ import asyncio
 import json
 from unittest.mock import AsyncMock
 
+import numpy as np
 import pytest
 import pytest_asyncio
 
@@ -24,9 +25,13 @@ import pytest_asyncio
 aiohttp = pytest.importorskip("aiohttp", reason="aiohttp is required for API tests")
 
 from config.settings import APIConfig
-from loongguard.api.server import AlertAPIServer
+from loongguard.api.server import (
+    AlertAPIServer,
+    AnalysisStatus,
+    VideoAnalyzer,
+    _TokenBucketRateLimiter,
+)
 from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType
-
 
 # ── 辅助函数 ─────────────────────────────────────────────────
 
@@ -503,3 +508,213 @@ class TestWebSocketPush:
 
         assert len(srv._alert_history) == 5
         assert srv._alert_history[-1].alert_id == "hist_004"
+
+
+# ── 令牌桶限流器测试 ────────────────────────────────────────
+
+
+class TestTokenBucketRateLimiter:
+    """_TokenBucketRateLimiter 单元测试"""
+
+    def test_allows_within_burst(self) -> None:
+        """突发容量内的请求应全部放行"""
+        limiter = _TokenBucketRateLimiter(rate=10.0, burst=5.0)
+        results = [limiter.allow("1.2.3.4") for _ in range(5)]
+        assert all(results)
+
+    def test_rejects_after_burst_exhausted(self) -> None:
+        """耗尽突发容量后应立即拒绝"""
+        limiter = _TokenBucketRateLimiter(rate=10.0, burst=3.0)
+        for _ in range(3):
+            assert limiter.allow("1.2.3.4")
+        assert not limiter.allow("1.2.3.4")
+
+    def test_refills_over_time(self) -> None:
+        """令牌应按速率随时间补充"""
+        limiter = _TokenBucketRateLimiter(rate=100.0, burst=1.0)
+        assert limiter.allow("1.2.3.4")
+        assert not limiter.allow("1.2.3.4")
+        # 100 rps 下 20ms 补充 2 个令牌
+        import time as _time
+        _time.sleep(0.03)
+        assert limiter.allow("1.2.3.4")
+
+    def test_independent_buckets_per_ip(self) -> None:
+        """不同客户端 IP 的桶相互独立"""
+        limiter = _TokenBucketRateLimiter(rate=1.0, burst=1.0)
+        assert limiter.allow("1.1.1.1")
+        assert not limiter.allow("1.1.1.1")
+        # 另一个 IP 不受影响
+        assert limiter.allow("2.2.2.2")
+
+    def test_disabled_when_rate_zero(self) -> None:
+        """rate<=0 时 enabled 为 False（限流关闭）"""
+        assert not _TokenBucketRateLimiter(rate=0.0, burst=10.0).enabled
+        assert _TokenBucketRateLimiter(rate=5.0, burst=10.0).enabled
+
+
+# ── 速率限制中间件集成测试 ──────────────────────────────────
+
+
+class TestRateLimitMiddleware:
+    """中间件层限流行为测试（真实 HTTP 请求）"""
+
+    @pytest.mark.asyncio
+    async def test_exceeding_rate_limit_returns_429(self) -> None:
+        """超出突发容量的连续请求应返回 429"""
+        cfg = APIConfig(host="127.0.0.1", port=0)
+        cfg.rate_limit_rps = 1.0
+        cfg.rate_limit_burst = 3.0
+        srv = AlertAPIServer(cfg)
+        await srv.start()
+        try:
+            port = srv._runner.addresses[0][1]
+            statuses = []
+            async with aiohttp.ClientSession() as session:
+                for _ in range(6):
+                    async with session.get(
+                        f"http://127.0.0.1:{port}/api/v1/status"
+                    ) as resp:
+                        statuses.append(resp.status)
+            assert 429 in statuses
+            assert statuses[:3] == [200, 200, 200]
+        finally:
+            await srv.stop()
+
+    @pytest.mark.asyncio
+    async def test_metrics_exempt_from_rate_limit(self) -> None:
+        """Prometheus 抓取端点 /metrics 不受限流影响"""
+        cfg = APIConfig(host="127.0.0.1", port=0)
+        cfg.rate_limit_rps = 1.0
+        cfg.rate_limit_burst = 1.0
+        srv = AlertAPIServer(cfg)
+        await srv.start()
+        try:
+            port = srv._runner.addresses[0][1]
+            async with aiohttp.ClientSession() as session:
+                for _ in range(5):
+                    async with session.get(
+                        f"http://127.0.0.1:{port}/metrics"
+                    ) as resp:
+                        assert resp.status == 200
+        finally:
+            await srv.stop()
+
+
+# ── VideoAnalyzer 注入与线程池分析测试 ──────────────────────
+
+
+class _FakeDetector:
+    """满足 DetectorLike 协议的假检测器"""
+
+    def infer(self, image: np.ndarray) -> list:
+        return []
+
+
+class _FakeMotion:
+    """满足 MotionDetectorLike 协议的假运动检测器（恒无运动）"""
+
+    def detect(self, current_gray: np.ndarray, prev_gray):
+        return []
+
+
+class _FakeROIScheduler:
+    """满足 ROISchedulerLike 协议的假 ROI 调度器"""
+
+    def process(self, frame: np.ndarray, motion_regions: list) -> list:
+        return []
+
+
+class TestVideoAnalyzerInjection:
+    """set_modules Protocol 运行期校验测试"""
+
+    def test_valid_modules_accepted(self) -> None:
+        """满足协议的模块应成功注入"""
+        analyzer = VideoAnalyzer()
+        analyzer.set_modules(
+            detector=_FakeDetector(),
+            motion=_FakeMotion(),
+            roi_scheduler=_FakeROIScheduler(),
+        )
+        assert analyzer._detector is not None
+        assert analyzer._motion is not None
+        assert analyzer._roi_scheduler is not None
+
+    def test_invalid_detector_rejected(self) -> None:
+        """不满足 DetectorLike 的对象应在注入时立即报 TypeError"""
+        analyzer = VideoAnalyzer()
+        with pytest.raises(TypeError):
+            analyzer.set_modules(
+                detector=object(),
+                motion=_FakeMotion(),
+                roi_scheduler=_FakeROIScheduler(),
+            )
+
+    def test_invalid_motion_rejected(self) -> None:
+        """不满足 MotionDetectorLike 的对象应报 TypeError"""
+        analyzer = VideoAnalyzer()
+        with pytest.raises(TypeError):
+            analyzer.set_modules(
+                detector=_FakeDetector(),
+                motion=object(),
+                roi_scheduler=_FakeROIScheduler(),
+            )
+
+
+class TestVideoAnalyzerThreading:
+    """run_analysis 线程池执行行为测试"""
+
+    @pytest.mark.asyncio
+    async def test_analysis_runs_off_event_loop(self, tmp_path) -> None:
+        """
+        逐帧分析应在非事件循环线程中执行。
+
+        用假模块记录执行线程标识：若与事件循环线程不同，
+        证明 CPU 密集逻辑已移入线程池（不阻塞事件循环）。
+        """
+        import threading
+
+        loop_thread = threading.get_ident()
+        observed: list[int] = []
+
+        class _ThreadSpyMotion(_FakeMotion):
+            def detect(self, current_gray, prev_gray):
+                observed.append(threading.get_ident())
+                return []
+
+        # 生成一个最小可解码视频（2 帧）
+        cv2 = pytest.importorskip("cv2", reason="cv2 required for video tests")
+        video_path = tmp_path / "tiny.mp4"
+        writer = cv2.VideoWriter(
+            str(video_path),
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            5.0,
+            (64, 64),
+        )
+        writer.write(np.zeros((64, 64, 3), dtype=np.uint8))
+        writer.write(np.full((64, 64, 3), 128, dtype=np.uint8))
+        writer.release()
+        assert video_path.exists()
+
+        analyzer = VideoAnalyzer()
+        analyzer.set_modules(
+            detector=_FakeDetector(),
+            motion=_ThreadSpyMotion(),
+            roi_scheduler=_FakeROIScheduler(),
+        )
+        task = analyzer.create_task("tiny.mp4", str(video_path))
+        await analyzer.run_analysis(task.task_id)
+
+        assert task.status == AnalysisStatus.COMPLETED
+        # 运动检测在线程池线程中执行，且与事件循环线程不同
+        assert observed, "detect 应至少被调用一次"
+        assert all(t != loop_thread for t in observed)
+
+    @pytest.mark.asyncio
+    async def test_missing_modules_fails_task(self, tmp_path) -> None:
+        """未注入模块时任务应标记 FAILED 并推送 error 事件"""
+        analyzer = VideoAnalyzer()
+        task = analyzer.create_task("x.mp4", str(tmp_path / "x.mp4"))
+        await analyzer.run_analysis(task.task_id)
+        assert task.status == AnalysisStatus.FAILED
+        assert "not initialized" in task.error_message

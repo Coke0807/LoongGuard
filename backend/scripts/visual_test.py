@@ -33,10 +33,9 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from config import load_config
 from loongguard.camera.v4l2_capture import V4L2Capture
-from loongguard.motion.frame_diff import FrameDiffDetector
 from loongguard.detection.yolo26_nano import YOLO26Nano
+from loongguard.motion.frame_diff import FrameDiffDetector
 from loongguard.pose.movenet import MoveNetLightning
-
 
 # ── 颜色常量 ──────────────────────────────────────────────────
 

@@ -13,7 +13,6 @@ import logging
 import math
 import time
 from collections import deque
-from typing import Optional
 
 import cv2
 import numpy as np
@@ -72,7 +71,7 @@ class MoveNetLightning:
         # 最近一次错误信息（截断 200 字符）
         self._last_error: str = ""
         # 上次执行推理的帧序号（节流用，None 表示尚未执行）
-        self._last_run_frame: Optional[int] = None
+        self._last_run_frame: int | None = None
         # 模型路径（脱敏后展示用）
         self._model_path: str = self._config.model_path
 
@@ -211,7 +210,7 @@ class MoveNetLightning:
 
         return []
 
-    def _infer_keypoints(self, frame_rgb: np.ndarray) -> Optional[np.ndarray]:
+    def _infer_keypoints(self, frame_rgb: np.ndarray) -> np.ndarray | None:
         """
         执行 MoveNet ONNX 推理
 

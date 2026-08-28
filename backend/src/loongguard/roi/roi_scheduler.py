@@ -12,11 +12,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
-from config import ROIConfig, DetectionConfig
+from config import DetectionConfig, ROIConfig
 from loongguard.detection.yolo26_nano import YOLO26Nano
 from loongguard.motion.frame_diff import MotionRegion
 from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType, BoundingBox
@@ -84,21 +83,61 @@ class ROIScheduler:
             # 裁剪运动区域
             roi_crop = self._crop_roi(frame, roi)
             if roi_crop is None:
+                logger.debug("ROI crop 无效: roi=(%d,%d,%d,%d)", roi.x, roi.y, roi.w, roi.h)
                 continue
+
+            crop_h, crop_w = roi_crop.shape[:2]
 
             # 第一级：在运动区域裁剪上快速粗筛
             stage1_results = self._detector.infer_stage1(roi_crop)
-            if not stage1_results:
-                continue
-
-            # 第二级：对 stage1 检测到的每个目标区域做高分辨率精准检测
-            for bbox in stage1_results:
-                stage2_bbox = self._run_stage2_on_detection(
-                    frame, frame_w, frame_h, bbox, roi,
+            if stage1_results:
+                logger.debug(
+                    "stage1 检出 %d 个目标, ROI=%dx%d, classes=%s",
+                    len(stage1_results), crop_w, crop_h,
+                    [b.class_name for b in stage1_results],
                 )
-                if stage2_bbox is not None:
-                    alert = self._bbox_to_alert(stage2_bbox)
-                    alerts.append(alert)
+
+                # 第二级：对 stage1 检测到的每个目标区域做高分辨率精准检测
+                for bbox in stage1_results:
+                    stage2_bbox = self._run_stage2_on_detection(
+                        frame, frame_w, frame_h, bbox, roi,
+                    )
+                    if stage2_bbox is not None:
+                        logger.debug(
+                            "stage2 确认: %s %.2f (%d,%d,%d,%d)",
+                            stage2_bbox.class_name, stage2_bbox.confidence,
+                            stage2_bbox.x1, stage2_bbox.y1, stage2_bbox.x2, stage2_bbox.y2,
+                        )
+                        alert = self._bbox_to_alert(stage2_bbox)
+                        alerts.append(alert)
+            else:
+                # stage1 无结果：直接在 ROI 裁剪上运行 stage2 全分辨率兜底
+                # 设计动机：stage1 分辨率（320px）过低或裁剪区域过小时，
+                # 小物体容易漏检。stage2 以更高分辨率（640px）重新检测，
+                # 作为召回率兜底策略。
+                logger.debug(
+                    "stage1 未检出, 尝试 stage2 兜底, ROI=%dx%d, pos=(%d,%d)",
+                    crop_w, crop_h, roi.x, roi.y,
+                )
+                fallback_results = self._detector.infer_stage2(roi_crop)
+                if fallback_results:
+                    logger.info(
+                        "stage2 兜底检出 %d 个目标, ROI=%dx%d, classes=%s",
+                        len(fallback_results), crop_w, crop_h,
+                        [b.class_name for b in fallback_results],
+                    )
+                    # 映射回原始帧坐标（ROI 裁剪起点为全局偏移）
+                    best = max(fallback_results, key=lambda b: b.confidence)
+                    mapped = BoundingBox(
+                        x1=max(0, min(frame_w, roi.x + best.x1)),
+                        y1=max(0, min(frame_h, roi.y + best.y1)),
+                        x2=max(0, min(frame_w, roi.x + best.x2)),
+                        y2=max(0, min(frame_h, roi.y + best.y2)),
+                        confidence=best.confidence,
+                        class_id=best.class_id,
+                        class_name=best.class_name,
+                    )
+                    alerts.append(self._bbox_to_alert(mapped))
 
         return alerts
 
@@ -109,7 +148,7 @@ class ROIScheduler:
         frame_h: int,
         stage1_bbox: BoundingBox,
         roi: ROI,
-    ) -> Optional[BoundingBox]:
+    ) -> BoundingBox | None:
         """
         对 stage1 检测框进行高分辨率精准验证
 
@@ -186,7 +225,7 @@ class ROIScheduler:
             )
         return rois
 
-    def _crop_roi(self, frame: np.ndarray, roi: ROI) -> Optional[np.ndarray]:
+    def _crop_roi(self, frame: np.ndarray, roi: ROI) -> np.ndarray | None:
         """从帧中裁剪 ROI 区域"""
         h, w = frame.shape[:2]
         x1 = max(0, roi.x)

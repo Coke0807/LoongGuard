@@ -18,23 +18,25 @@ from __future__ import annotations
 import asyncio
 import base64
 import hmac
-import io
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 from aiohttp import web
 
 from config import APIConfig
+from loongguard.api.metrics import RATE_LIMITED
+from loongguard.db.database import AlertDatabase
 from loongguard.utils.schema import AlertLog, BoundingBox
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,45 @@ _UPLOAD_DIR = Path(__file__).parent.parent.parent / "data" / "uploads"
 _MAX_UPLOAD_SIZE = 500 * 1024 * 1024
 # 支持的视频格式
 _ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm"}
+
+
+# ── 模块接口协议（结构化鸭子类型约束）─────────────────────────
+# 设计动机：VideoAnalyzer / AlertAPIServer 通过注入方式持有检测、运动、
+# ROI 等子模块引用，旧实现使用 Any 类型，调用方传错对象只能运行期暴露。
+# 此处用 Protocol 形式化各模块的最小接口，静态检查器（mypy/pyright）
+# 可在注入点校验类型，同时不引入运行时继承耦合。
+
+
+@runtime_checkable
+class DetectorLike(Protocol):
+    """目标检测器最小接口（YOLO26Nano 满足）"""
+
+    def infer(self, image: np.ndarray) -> list[BoundingBox]: ...
+
+
+@runtime_checkable
+class MotionDetectorLike(Protocol):
+    """运动检测器最小接口（FrameDiffDetector 满足）"""
+
+    def detect(
+        self, current_gray: np.ndarray, prev_gray: np.ndarray | None
+    ) -> list: ...
+
+
+@runtime_checkable
+class ROISchedulerLike(Protocol):
+    """ROI 调度器最小接口（ROIScheduler 满足）"""
+
+    def process(
+        self, frame: np.ndarray, motion_regions: list
+    ) -> list[AlertLog]: ...
+
+
+@runtime_checkable
+class HealthProviderLike(Protocol):
+    """模型健康快照提供者（无参可调用，返回 dict）"""
+
+    def __call__(self) -> dict: ...
 
 
 class VideoHub:
@@ -63,9 +104,9 @@ class VideoHub:
 
     def __init__(self, max_fps: int = 25) -> None:
         self._max_fps = max_fps
-        self._latest_jpeg: Optional[bytes] = None
-        self._latest_web_jpeg: Optional[bytes] = None
-        self._lock = __import__("threading").Lock()
+        self._latest_jpeg: bytes | None = None
+        self._latest_web_jpeg: bytes | None = None
+        self._lock = threading.Lock()
 
         # 实时统计
         self._frame_count: int = 0
@@ -77,9 +118,9 @@ class VideoHub:
     def push_frame(
         self,
         frame_rgb: np.ndarray,
-        boxes: Optional[list[BoundingBox]] = None,
-        motion_regions: Optional[list] = None,
-        keypoints: Optional[np.ndarray] = None,
+        boxes: list[BoundingBox] | None = None,
+        motion_regions: list | None = None,
+        keypoints: np.ndarray | None = None,
     ) -> None:
         """
         推送一帧到视频流缓冲
@@ -160,19 +201,18 @@ class VideoHub:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 1,
             )
 
-            # JPEG 编码
+            # JPEG 编码（单次编码，quality=60 兼顾画质与带宽）
+            # 设计动机：原实现每帧编码两次（quality 75 + 50），在嵌入式平台上
+            # 编码耗时 ~20-40ms/帧，是帧率瓶颈之一。改为单次编码后本地和 Web
+            # 端共用同一帧数据，省掉 ~50% 编码开销。
             ret, buf = cv2.imencode(
-                ".jpg", display, [cv2.IMWRITE_JPEG_QUALITY, 75],
+                ".jpg", display, [cv2.IMWRITE_JPEG_QUALITY, 60],
             )
             if ret:
-                # Web 端用更低质量，减小带宽（约 20-40KB vs 50-100KB）
-                ret_web, buf_web = cv2.imencode(
-                    ".jpg", display, [cv2.IMWRITE_JPEG_QUALITY, 50],
-                )
+                jpeg_bytes = buf.tobytes()
                 with self._lock:
-                    self._latest_jpeg = buf.tobytes()
-                    if ret_web:
-                        self._latest_web_jpeg = buf_web.tobytes()
+                    self._latest_jpeg = jpeg_bytes
+                    self._latest_web_jpeg = jpeg_bytes
             else:
                 # JPEG 编码失败降级：生成纯色带文字的信息帧
                 # 设计动机（修复 #2）：在 LoongArch 等平台若 OpenCV 缺少 JPEG 编码器，
@@ -186,12 +226,12 @@ class VideoHub:
         except Exception:
             logger.exception("VideoHub push_frame failed")
 
-    def get_jpeg(self) -> Optional[bytes]:
+    def get_jpeg(self) -> bytes | None:
         """获取最新一帧的 JPEG 字节（线程安全，本地高质量）"""
         with self._lock:
             return self._latest_jpeg
 
-    def get_web_jpeg(self) -> Optional[bytes]:
+    def get_web_jpeg(self) -> bytes | None:
         """获取最新一帧的 Web 优化 JPEG（低质量、小体积）"""
         with self._lock:
             return self._latest_web_jpeg or self._latest_jpeg
@@ -307,7 +347,7 @@ class AnalysisTask:
     # 进度追踪
     total_frames: int = 0
     processed_frames: int = 0
-    current_frame_jpeg: Optional[bytes] = None
+    current_frame_jpeg: bytes | None = None
     # 检测结果
     alerts: list[dict] = field(default_factory=list)
     detections_timeline: list[dict] = field(default_factory=list)
@@ -315,10 +355,10 @@ class AnalysisTask:
     class_counts: dict = field(default_factory=dict)
     error_message: str = ""
     # 视频元信息（用于 SSE 重连时补发 meta 事件）
-    video_meta: Optional[dict] = field(default=None, repr=False)
+    video_meta: dict | None = field(default=None, repr=False)
     # SSE 事件队列（每个连接的客户端独立队列）
     _sse_queues: list = field(default_factory=list, repr=False)
-    _lock: Any = field(default_factory=lambda: __import__("threading").Lock(), repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def push_event(self, event_type: str, data: dict) -> None:
         """向所有 SSE 客户端推送事件"""
@@ -378,13 +418,30 @@ class VideoAnalyzer:
 
     def __init__(self) -> None:
         self._tasks: dict[str, AnalysisTask] = {}
-        # 分析器引用（由 Pipeline 初始化后注入）
-        self._detector: Any = None
-        self._motion: Any = None
-        self._roi_scheduler: Any = None
+        # 分析器引用（由 Pipeline 初始化后注入，Protocol 约束接口形状）
+        self._detector: DetectorLike | None = None
+        self._motion: MotionDetectorLike | None = None
+        self._roi_scheduler: ROISchedulerLike | None = None
 
-    def set_modules(self, detector: Any, motion: Any, roi_scheduler: Any) -> None:
-        """注入 Pipeline 的检测子模块引用"""
+    def set_modules(
+        self,
+        detector: DetectorLike,
+        motion: MotionDetectorLike,
+        roi_scheduler: ROISchedulerLike,
+    ) -> None:
+        """
+        注入 Pipeline 的检测子模块引用
+
+        运行期校验 Protocol 形状，注入错误对象时立即报错而非延迟到分析阶段。
+        """
+        if not isinstance(detector, DetectorLike):
+            raise TypeError(f"detector 不满足 DetectorLike 协议: {type(detector)}")
+        if not isinstance(motion, MotionDetectorLike):
+            raise TypeError(f"motion 不满足 MotionDetectorLike 协议: {type(motion)}")
+        if not isinstance(roi_scheduler, ROISchedulerLike):
+            raise TypeError(
+                f"roi_scheduler 不满足 ROISchedulerLike 协议: {type(roi_scheduler)}"
+            )
         self._detector = detector
         self._motion = motion
         self._roi_scheduler = roi_scheduler
@@ -393,7 +450,7 @@ class VideoAnalyzer:
     def tasks(self) -> dict[str, AnalysisTask]:
         return self._tasks
 
-    def get_task(self, task_id: str) -> Optional[AnalysisTask]:
+    def get_task(self, task_id: str) -> AnalysisTask | None:
         return self._tasks.get(task_id)
 
     def create_task(self, filename: str, file_path: str) -> AnalysisTask:
@@ -411,13 +468,16 @@ class VideoAnalyzer:
         """
         执行视频分析（后台协程）
 
-        逐帧读取视频 -> 运动检测 -> ROI 检测 -> 推送结果
+        主协程仅负责打开视频读取元信息；CPU 密集的逐帧分析
+        （解码 + 灰度 + 运动检测 + ONNX 推理）通过 asyncio.to_thread
+        移入线程池，避免阻塞事件循环（旧实现每帧阻塞事件循环数十
+        毫秒，导致 MJPEG 流与 WebSocket 推送卡顿）。
         """
         task = self._tasks.get(task_id)
         if not task:
             return
 
-        if self._detector is None or self._motion is None:
+        if self._detector is None or self._motion is None or self._roi_scheduler is None:
             task.status = AnalysisStatus.FAILED
             task.error_message = "Detection modules not initialized"
             task.push_event("error", {"message": task.error_message})
@@ -435,133 +495,196 @@ class VideoAnalyzer:
 
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-            task.total_frames = total_frames
             meta_data = {
                 "total_frames": total_frames,
                 "fps": round(fps, 1),
                 "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
                 "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
             }
+            cap.release()
+
+            task.total_frames = total_frames
             task.video_meta = meta_data
             task.push_event("meta", meta_data)
 
-            frame_idx = 0
-            prev_gray: Optional[np.ndarray] = None
-
-            yield_interval = max(1, int(fps / 5))
-
-            try:
-                while True:
-                    ret, frame_bgr = cap.read()
-                    if not ret:
-                        break
-
-                    frame_idx += 1
-
-                    if frame_idx % yield_interval != 0 and frame_idx != 1:
-                        continue
-
-                    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-                    current_gray = np.dot(
-                        frame_rgb[..., :3], [0.299, 0.587, 0.114]
-                    ).astype(np.uint8)
-
-                    motion_regions = self._motion.detect(current_gray, prev_gray)
-                    prev_gray = current_gray
-
-                    det_boxes: list[BoundingBox] = []
-                    frame_alerts: list[dict] = []
-
-                    if motion_regions:
-                        alerts = self._roi_scheduler.process(
-                            frame_rgb, motion_regions,
-                        )
-                        for alert in alerts:
-                            det_boxes.extend(alert.detections)
-                            alert_dict = alert.to_dict()
-                            alert_dict["frame_index"] = frame_idx
-                            alert_dict["video_time"] = round(frame_idx / fps, 2)
-                            frame_alerts.append(alert_dict)
-                            task.alerts.append(alert_dict)
-
-                    for box in det_boxes:
-                        name = box.class_name
-                        task.class_counts[name] = task.class_counts.get(name, 0) + 1
-
-                    if det_boxes:
-                        task.detections_timeline.append({
-                            "frame": frame_idx,
-                            "time": round(frame_idx / fps, 2),
-                            "count": len(det_boxes),
-                            "classes": [b.class_name for b in det_boxes],
-                        })
-
-                    annotated = frame_bgr.copy()
-                    for box in det_boxes:
-                        import cv2 as _cv2
-                        _cv2.rectangle(
-                            annotated,
-                            (box.x1, box.y1), (box.x2, box.y2),
-                            (0, 0, 255), 2,
-                        )
-                        label = f"{box.class_name} {box.confidence:.0%}"
-                        (tw, th), _ = _cv2.getTextSize(
-                            label, _cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1,
-                        )
-                        _cv2.rectangle(
-                            annotated,
-                            (box.x1, box.y1 - th - 6), (box.x1 + tw, box.y1),
-                            (0, 0, 255), -1,
-                        )
-                        _cv2.putText(
-                            annotated, label,
-                            (box.x1, box.y1 - 4),
-                            _cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1,
-                        )
-
-                    _, jpeg_buf = cv2.imencode(
-                        ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 60],
-                    )
-                    task.current_frame_jpeg = jpeg_buf.tobytes()
-
-                    task.processed_frames = frame_idx
-
-                    task.push_event("frame", {
-                        "frame_index": frame_idx,
-                        "total_frames": total_frames,
-                        "progress": round(frame_idx / max(total_frames, 1) * 100, 1),
-                        "detections": [
-                            {
-                                "class_name": b.class_name,
-                                "confidence": round(b.confidence, 3),
-                                "x1": b.x1, "y1": b.y1,
-                                "x2": b.x2, "y2": b.y2,
-                            }
-                            for b in det_boxes
-                        ],
-                        "motion_count": len(motion_regions),
-                        "video_time": round(frame_idx / fps, 2),
-                        "alerts": frame_alerts,
-                    })
-
-                    await asyncio.sleep(0)
-            finally:
-                cap.release()
-
-            task.status = AnalysisStatus.COMPLETED
-            task.processed_frames = task.total_frames
-            task.push_event("complete", {
-                "total_alerts": len(task.alerts),
-                "total_detections": sum(task.class_counts.values()),
-                "class_counts": task.class_counts,
-                "timeline": task.detections_timeline,
-            })
+            # 逐帧分析在线程池中执行（纯同步逻辑）
+            await asyncio.to_thread(self._analyze_frames, task, fps)
 
         except Exception as e:
             logger.exception("Video analysis failed for task %s", task_id)
             task.status = AnalysisStatus.FAILED
             task.error_message = str(e)
             task.push_event("error", {"message": str(e)})
+
+    def _analyze_frames(self, task: AnalysisTask, fps: float) -> None:
+        """
+        逐帧视频分析（在线程池中运行，不占用事件循环）
+
+        线程安全说明：
+            - push_event 内部由 threading.Lock 保护；
+            - asyncio.Queue.put_nowait 是线程安全的（官方文档保证），
+              事件循环侧的 get() 会在下一次调度时收到事件。
+        """
+        import cv2
+
+        motion = self._motion
+        roi_scheduler = self._roi_scheduler
+        if motion is None or roi_scheduler is None:
+            raise RuntimeError("Detection modules not initialized")
+
+        cap = cv2.VideoCapture(task.file_path)
+        if not cap.isOpened():
+            raise RuntimeError(f"Cannot open video: {task.file_path}")
+
+        total_frames = task.total_frames
+        frame_idx = 0
+        prev_gray: np.ndarray | None = None
+        yield_interval = max(1, int(fps / 5))
+
+        try:
+            while True:
+                ret, frame_bgr = cap.read()
+                if not ret:
+                    break
+
+                frame_idx += 1
+
+                if frame_idx % yield_interval != 0 and frame_idx != 1:
+                    continue
+
+                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                current_gray = np.dot(
+                    frame_rgb[..., :3], [0.299, 0.587, 0.114]
+                ).astype(np.uint8)
+
+                motion_regions = motion.detect(current_gray, prev_gray)
+                prev_gray = current_gray
+
+                det_boxes: list[BoundingBox] = []
+                frame_alerts: list[dict] = []
+
+                if motion_regions:
+                    alerts = roi_scheduler.process(frame_rgb, motion_regions)
+                    for alert in alerts:
+                        det_boxes.extend(alert.detections)
+                        alert_dict = alert.to_dict()
+                        alert_dict["frame_index"] = frame_idx
+                        alert_dict["video_time"] = round(frame_idx / fps, 2)
+                        frame_alerts.append(alert_dict)
+                        task.alerts.append(alert_dict)
+
+                for box in det_boxes:
+                    name = box.class_name
+                    task.class_counts[name] = task.class_counts.get(name, 0) + 1
+
+                if det_boxes:
+                    task.detections_timeline.append({
+                        "frame": frame_idx,
+                        "time": round(frame_idx / fps, 2),
+                        "count": len(det_boxes),
+                        "classes": [b.class_name for b in det_boxes],
+                    })
+
+                annotated = frame_bgr.copy()
+                for box in det_boxes:
+                    cv2.rectangle(
+                        annotated,
+                        (box.x1, box.y1), (box.x2, box.y2),
+                        (0, 0, 255), 2,
+                    )
+                    label = f"{box.class_name} {box.confidence:.0%}"
+                    (tw, th), _ = cv2.getTextSize(
+                        label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1,
+                    )
+                    cv2.rectangle(
+                        annotated,
+                        (box.x1, box.y1 - th - 6), (box.x1 + tw, box.y1),
+                        (0, 0, 255), -1,
+                    )
+                    cv2.putText(
+                        annotated, label,
+                        (box.x1, box.y1 - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1,
+                    )
+
+                _, jpeg_buf = cv2.imencode(
+                    ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 60],
+                )
+                task.current_frame_jpeg = jpeg_buf.tobytes()
+
+                task.processed_frames = frame_idx
+
+                task.push_event("frame", {
+                    "frame_index": frame_idx,
+                    "total_frames": total_frames,
+                    "progress": round(frame_idx / max(total_frames, 1) * 100, 1),
+                    "detections": [
+                        {
+                            "class_name": b.class_name,
+                            "confidence": round(b.confidence, 3),
+                            "x1": b.x1, "y1": b.y1,
+                            "x2": b.x2, "y2": b.y2,
+                        }
+                        for b in det_boxes
+                    ],
+                    "motion_count": len(motion_regions),
+                    "video_time": round(frame_idx / fps, 2),
+                    "alerts": frame_alerts,
+                })
+        finally:
+            cap.release()
+
+        task.status = AnalysisStatus.COMPLETED
+        task.processed_frames = task.total_frames
+        task.push_event("complete", {
+            "total_alerts": len(task.alerts),
+            "total_detections": sum(task.class_counts.values()),
+            "class_counts": task.class_counts,
+            "timeline": task.detections_timeline,
+        })
+
+
+class _TokenBucketRateLimiter:
+    """
+    每客户端 IP 的令牌桶限流器
+
+    设计动机：
+        局域网部署无 WAF/反向代理，应用层需防暴力请求与端口扫描。
+        令牌桶允许短时突发（burst），长期速率受 rate 约束。
+        线程安全：中间件在事件循环单线程内调用，但 to_thread 场景
+        下也可能并发，统一加锁成本极低。
+    """
+
+    _MAX_TRACKED_IPS = 10000  # 跟踪表上限，防止恶意源耗尽内存
+
+    def __init__(self, rate: float, burst: float) -> None:
+        self._rate = rate
+        self._burst = burst
+        self._buckets: dict[str, tuple[float, float]] = {}
+        self._lock = threading.Lock()
+
+    @property
+    def enabled(self) -> bool:
+        """rate <= 0 视为禁用限流"""
+        return self._rate > 0
+
+    def allow(self, key: str) -> bool:
+        """消耗 1 个令牌；桶空则拒绝"""
+        now = time.monotonic()
+        with self._lock:
+            if len(self._buckets) > self._MAX_TRACKED_IPS:
+                # 惰性清理：丢弃 60 秒未活跃的桶，控制内存
+                cutoff = now - 60.0
+                self._buckets = {
+                    k: v for k, v in self._buckets.items() if v[1] >= cutoff
+                }
+            tokens, last = self._buckets.get(key, (self._burst, now))
+            tokens = min(self._burst, tokens + (now - last) * self._rate)
+            if tokens >= 1.0:
+                self._buckets[key] = (tokens - 1.0, now)
+                return True
+            self._buckets[key] = (tokens, now)
+            return False
 
 
 class AlertAPIServer:
@@ -594,15 +717,20 @@ class AlertAPIServer:
         self._runner: Any = None
         self.video_hub = VideoHub()
         self.video_analyzer = VideoAnalyzer()
-        self._db: Any = None
+        self._db: AlertDatabase | None = None
         # 认证凭据（在 .env 加载后构造，因此此处读取是安全的）
         # 设计动机：旧实现模块导入时读取 os.environ，导致 .env 未注入时
         # 凭据为空、认证静默失效。改为实例级读取，保证拿到真实配置。
         self._auth_user = os.environ.get("LG_AUTH_USER", "")
         self._auth_pass = os.environ.get("LG_AUTH_PASS", "")
         # 注入：模型健康快照提供者（None 表示未注入，对应端点返回 503）
-        self._pose_health_provider: Optional[Any] = None
-        self._detection_health_provider: Optional[Any] = None
+        self._pose_health_provider: HealthProviderLike | None = None
+        self._detection_health_provider: HealthProviderLike | None = None
+        self._face_health_provider: HealthProviderLike | None = None
+        # 每 IP 令牌桶限流（rate<=0 时禁用）
+        self._rate_limiter = _TokenBucketRateLimiter(
+            config.rate_limit_rps, config.rate_limit_burst
+        )
 
     async def start(self) -> None:
         """启动 API 服务"""
@@ -611,7 +739,7 @@ class AlertAPIServer:
         except ImportError:
             raise ImportError(
                 "aiohttp is required for API server: pip install aiohttp"
-            )
+            ) from None
 
         self._app = web.Application(
             client_max_size=_MAX_UPLOAD_SIZE,
@@ -651,6 +779,7 @@ class AlertAPIServer:
         # 健康检查端点（运维可观测性：分别报告 YOLO/MoveNet 状态）
         self._app.router.add_get("/health/pose", self._handle_health_pose)
         self._app.router.add_get("/health/detection", self._handle_health_detection)
+        self._app.router.add_get("/health/face", self._handle_health_face)
         self._app.router.add_get("/health", self._handle_health)
 
         # 审计日志查询端点（合规：查看敏感接口访问记录）
@@ -716,7 +845,6 @@ class AlertAPIServer:
             - 自适应间隔：根据实际传输耗时动态调整 sleep
             - 降质传输：Web 端 JPEG quality=50（比本地 75 更小）
         """
-        from aiohttp import web
 
         response = web.StreamResponse(
             status=200,
@@ -758,7 +886,7 @@ class AlertAPIServer:
                             timeout=2.0,
                         )
                         last_sent_count = current_count
-                    except (asyncio.TimeoutError, ConnectionResetError):
+                    except (TimeoutError, ConnectionResetError):
                         break
 
                 # 自适应间隔：保证总间隔不低于 40ms，但不叠加传输耗时
@@ -774,7 +902,6 @@ class AlertAPIServer:
 
     async def _handle_status(self, request: Any) -> Any:
         """设备状态接口"""
-        from aiohttp import web
 
         return web.json_response({
             "status": "running",
@@ -784,7 +911,6 @@ class AlertAPIServer:
 
     async def _handle_stats(self, request: Any) -> Any:
         """实时统计接口"""
-        from aiohttp import web
 
         stats = self.video_hub.get_stats()
         stats["total_alerts_history"] = len(self._alert_history)
@@ -792,7 +918,6 @@ class AlertAPIServer:
 
     async def _handle_alerts(self, request: Any) -> Any:
         """告警历史查询接口（支持分页、过滤、时间范围）"""
-        from aiohttp import web
 
         try:
             page = max(1, int(request.query.get("page", "1")))
@@ -850,7 +975,6 @@ class AlertAPIServer:
 
     async def _handle_ack(self, request: Any) -> Any:
         """确认/消警接口"""
-        from aiohttp import web
 
         alert_id = request.match_info["alert_id"]
 
@@ -877,7 +1001,6 @@ class AlertAPIServer:
 
     async def _handle_ack_all(self, request: Any) -> Any:
         """批量确认所有未确认的告警"""
-        from aiohttp import web
 
         acked = 0
 
@@ -901,7 +1024,6 @@ class AlertAPIServer:
 
     async def _handle_ws(self, request: Any) -> Any:
         """WebSocket 告警推送端点"""
-        from aiohttp import web
 
         ws = web.WebSocketResponse()
         await ws.prepare(request)
@@ -910,7 +1032,8 @@ class AlertAPIServer:
             "WebSocket client connected (total: %d)", len(self._ws_clients),
         )
 
-        async for msg in ws:
+        # 空转等待断开：async for 自然结束（连接关闭）后清理客户端
+        async for _ in ws:
             pass
 
         self._ws_clients.remove(ws)
@@ -926,7 +1049,6 @@ class AlertAPIServer:
         支持 multipart/form-data 格式，字段名 "video"。
         文件大小限制 500MB，仅接受主流视频格式。
         """
-        from aiohttp import web
 
         reader = await request.multipart()
         video_field = await reader.next()
@@ -986,7 +1108,6 @@ class AlertAPIServer:
 
     async def _handle_analyze(self, request: Any) -> Any:
         """触发视频分析任务"""
-        from aiohttp import web
 
         task_id = request.match_info["task_id"]
         task = self.video_analyzer.get_task(task_id)
@@ -1010,7 +1131,6 @@ class AlertAPIServer:
 
     async def _handle_analyze_status(self, request: Any) -> Any:
         """查询分析任务状态"""
-        from aiohttp import web
 
         task_id = request.match_info["task_id"]
         task = self.video_analyzer.get_task(task_id)
@@ -1026,7 +1146,6 @@ class AlertAPIServer:
         前端通过 EventSource 连接此端点，实时接收逐帧分析结果。
         事件类型：meta / frame / complete / error / status
         """
-        from aiohttp import web
 
         task_id = request.match_info["task_id"]
         task = self.video_analyzer.get_task(task_id)
@@ -1050,12 +1169,12 @@ class AlertAPIServer:
             # 如果任务已经开始处理，补发 meta 事件给新连接的 SSE 客户端
             if task.video_meta is not None and task.status == AnalysisStatus.PROCESSING:
                 meta_json = json.dumps(task.video_meta, ensure_ascii=False)
-                await response.write(f"event: meta\ndata: {meta_json}\n\n".encode("utf-8"))
+                await response.write(f"event: meta\ndata: {meta_json}\n\n".encode())
 
             while True:
                 try:
                     event = await asyncio.wait_for(q.get(), timeout=30.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # 心跳：防止连接超时
                     await response.write(b": heartbeat\n\n")
                     continue
@@ -1063,7 +1182,7 @@ class AlertAPIServer:
                 event_type = event.get("type", "message")
                 event_data = json.dumps(event.get("data", {}), ensure_ascii=False)
                 await response.write(
-                    f"event: {event_type}\ndata: {event_data}\n\n".encode("utf-8")
+                    f"event: {event_type}\ndata: {event_data}\n\n".encode()
                 )
 
                 if event_type in ("complete", "error"):
@@ -1078,7 +1197,6 @@ class AlertAPIServer:
 
     async def _handle_analyze_frame(self, request: Any) -> Any:
         """获取当前分析帧的标注图片"""
-        from aiohttp import web
 
         task_id = request.match_info["task_id"]
         task = self.video_analyzer.get_task(task_id)
@@ -1096,7 +1214,6 @@ class AlertAPIServer:
 
     async def _handle_metrics(self, request: Any) -> Any:
         """Prometheus 指标端点"""
-        from aiohttp import web
 
         from loongguard.api.metrics import get_metrics_bytes, get_metrics_content_type
 
@@ -1123,7 +1240,6 @@ class AlertAPIServer:
             200: 正常快照
             503: 模型未注入或不可用（pose 模块降级关闭）
         """
-        from aiohttp import web
 
         if self._pose_health_provider is None:
             return web.json_response(
@@ -1148,7 +1264,6 @@ class AlertAPIServer:
         与 /health/pose 对称。YOLO 是危险物品检测主链路，监控其健康度
         比 pose 更关键：当 YOLO 挂掉时，整个系统失去最核心的告警能力。
         """
-        from aiohttp import web
 
         if self._detection_health_provider is None:
             return web.json_response(
@@ -1166,20 +1281,44 @@ class AlertAPIServer:
         status = 200 if snapshot.get("available") else 503
         return web.json_response(snapshot, status=status)
 
+    async def _handle_health_face(self, request: Any) -> Any:
+        """
+        人脸检测模型健康检查端点
+
+        与 /health/pose 对称。人脸检测是睡姿监测辅助功能，
+        其 health 状态用于运维确认模型是否正常加载。
+        """
+
+        if self._face_health_provider is None:
+            return web.json_response(
+                {"available": False, "reason": "face module not injected"},
+                status=503,
+            )
+        try:
+            snapshot = self._face_health_provider()
+        except Exception as exc:
+            logger.exception("face health provider failed")
+            return web.json_response(
+                {"available": False, "reason": f"health error: {exc}"},
+                status=503,
+            )
+        status = 200 if snapshot.get("available") else 503
+        return web.json_response(snapshot, status=status)
+
     async def _handle_health(self, request: Any) -> Any:
         """
         总体健康检查
 
         设计动机：负载均衡器 / K8s liveness probe 探活使用，
         不应细粒度到具体模型，避免一个模型挂掉就重启整个进程。
-        进程存活即视为健康；模型级健康请查询 /health/pose、/health/detection。
+        进程存活即视为健康；模型级健康请查询 /health/pose、/health/detection、/health/face。
         """
-        from aiohttp import web
 
-        # 聚合两个子端点的状态：任一不可用时 overall=false
+        # 聚合所有子端点的状态：任一不可用时 overall=false
         components = {
             "pose": "missing",
             "detection": "missing",
+            "face": "missing",
         }
         if self._pose_health_provider is not None:
             try:
@@ -1193,6 +1332,12 @@ class AlertAPIServer:
                 components["detection"] = "ok" if snap.get("available") else "degraded"
             except Exception:
                 components["detection"] = "error"
+        if self._face_health_provider is not None:
+            try:
+                snap = self._face_health_provider()
+                components["face"] = "ok" if snap.get("available") else "degraded"
+            except Exception:
+                components["face"] = "error"
 
         overall_ok = all(v in ("ok", "missing") for v in components.values())
 
@@ -1210,7 +1355,7 @@ class AlertAPIServer:
             "onnx_providers": providers,
         }, status=200 if overall_ok else 503)
 
-    def set_database(self, db: Any) -> None:
+    def set_database(self, db: AlertDatabase) -> None:
         """注入数据库引用，供告警查询和确认接口使用"""
         self._db = db
 
@@ -1248,7 +1393,7 @@ class AlertAPIServer:
         if self._db is None:
             return
         entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "method": request.method,
             "path": request.path,
             "remote": request.remote or "",
@@ -1258,7 +1403,6 @@ class AlertAPIServer:
 
     async def _handle_audit(self, request: Any) -> Any:
         """审计日志查询（分页），用于合规审查"""
-        from aiohttp import web
 
         if self._db is None:
             return web.json_response({"error": "database not initialized"}, status=503)
@@ -1274,7 +1418,7 @@ class AlertAPIServer:
 
         return web.json_response(self._db.query_audit(page=page, page_size=page_size))
 
-    def set_pose_health_provider(self, provider: Any) -> None:
+    def set_pose_health_provider(self, provider: HealthProviderLike) -> None:
         """
         注入姿态模型健康快照提供者
 
@@ -1287,11 +1431,22 @@ class AlertAPIServer:
         """
         self._pose_health_provider = provider
 
-    def set_detection_health_provider(self, provider: Any) -> None:
+    def set_detection_health_provider(self, provider: HealthProviderLike) -> None:
         """
         注入 YOLO26 检测模型健康快照提供者（与 pose provider 对称）
         """
         self._detection_health_provider = provider
+
+    def set_face_health_provider(self, provider: HealthProviderLike) -> None:
+        """
+        注入人脸检测模型健康快照提供者
+
+        Args:
+            provider: 无参可调用对象（如 ONNXFaceDetector 的 is_available 封装）
+
+        设计动机：与 pose/detection provider 对称，统一健康检查模式。
+        """
+        self._face_health_provider = provider
 
 
 # ── 辅助函数 ──────────────────────────────────────────────────
@@ -1336,19 +1491,33 @@ _AUDIT_PATHS = {
 }
 
 
-def _make_server_middleware(server: "AlertAPIServer") -> Any:
+def _make_server_middleware(server: AlertAPIServer) -> Any:
     """
-    生成后端中间件（认证 + 访问审计）闭包工厂。
+    生成后端中间件（限流 + 认证 + 访问审计）闭包工厂。
 
     设计动机：
         1. 认证凭据从 server 实例读取（.env 加载后构造），修复旧实现
            "模块导入时读 os.environ 导致凭据为空"的时序 bug。
         2. 敏感路径访问（含失败尝试）写入审计日志，满足未成年人隐私合规。
         3. 使用 hmac.compare_digest 防止时序攻击。
+        4. 每 IP 令牌桶限流置于最前：先挡暴力流量，再做认证与审计，
+           避免扫描请求消耗认证计算与审计写入。/metrics 豁免
+           （Prometheus 抓取频率固定且为运维必需）。
     """
 
     @web.middleware
     async def _middleware(request: web.Request, handler: Any) -> web.StreamResponse:
+        # 限流：每客户端 IP 令牌桶（/metrics 豁免）
+        limiter = server._rate_limiter
+        if limiter.enabled and request.path != "/metrics":
+            client_ip = request.remote or "unknown"
+            if not limiter.allow(client_ip):
+                RATE_LIMITED.inc()
+                raise web.HTTPTooManyRequests(
+                    headers={"Retry-After": "1"},
+                    text="Rate limit exceeded",
+                )
+
         # 审计：高敏感路径记录访问（认证前记录，失败尝试同样留痕）
         if request.path in _AUDIT_PATHS:
             server.enqueue_audit(request)

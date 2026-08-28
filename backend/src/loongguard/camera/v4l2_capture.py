@@ -23,7 +23,6 @@ import sys
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 
@@ -48,7 +47,7 @@ _DEFAULT_MOCK_VIDEO = Path("tests") / "mock_classroom.mp4"
 # ────────────────────────────────────────────────────────────────
 
 _V4L2_LIB_PATH = Path(__file__).parent / "v4l2_ext.so"
-_v4l2_lib: Optional[ctypes.CDLL] = None
+_v4l2_lib: ctypes.CDLL | None = None
 
 
 def _try_compile_v4l2_ext() -> bool:
@@ -86,7 +85,7 @@ def _try_compile_v4l2_ext() -> bool:
         return False
 
 
-def _load_v4l2_lib() -> Optional[ctypes.CDLL]:
+def _load_v4l2_lib() -> ctypes.CDLL | None:
     """
     加载 v4l2_ext.so 并声明 C 函数签名。
 
@@ -193,16 +192,16 @@ class V4L2Capture:
         self._device_fd: int = -1
         self._frame_count: int = 0
         self._opened: bool = False
-        self._lib: Optional[ctypes.CDLL] = None
+        self._lib: ctypes.CDLL | None = None
 
         # OpenCV fallback 后端状态
         self._use_opencv: bool = False
-        self._cap: Optional[object] = None  # cv2.VideoCapture 实例
+        self._cap: object | None = None  # cv2.VideoCapture 实例
         self._source_is_file: bool = False
         self._file_total_frames: int = 0  # 视频文件总帧数，用于循环控制
         self._file_loops: int = 0         # 已循环播放次数
 
-    def open(self, source: Optional[str] = None) -> None:
+    def open(self, source: str | None = None) -> None:
         """
         打开摄像头设备并初始化采集流程
 
@@ -248,7 +247,7 @@ class V4L2Capture:
         self._open_fallback()
         return
 
-    def read(self) -> Optional[Frame]:
+    def read(self) -> Frame | None:
         """
         读取一帧
 
@@ -394,7 +393,7 @@ class V4L2Capture:
             "请将测试视频放置到 tests/mock_classroom.mp4"
         )
 
-    def _read_opencv(self) -> Optional[Frame]:
+    def _read_opencv(self) -> Frame | None:
         """通过 OpenCV 读取一帧，处理循环播放和颜色空间转换"""
         if self._cap is None:
             return None
@@ -510,7 +509,7 @@ class V4L2Capture:
         self._source_is_file = False
         self._opened = True
 
-    def _read_v4l2(self) -> Optional[Frame]:
+    def _read_v4l2(self) -> Frame | None:
         """通过 V4L2 C 扩展读取一帧，失败时自动降级到 OpenCV"""
         if self._lib is None or self._device_fd < 0:
             return None

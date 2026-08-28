@@ -17,7 +17,6 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Union
 
 import cv2
 import numpy as np
@@ -77,7 +76,7 @@ class LoongONNXPredictor:
         model_path: str,
         input_size: int = 640,
         conf_threshold: float = 0.45,
-        classes: Optional[list[str]] = None,
+        classes: list[str] | None = None,
         quantized: bool = False,
     ) -> None:
         self.model_path = model_path
@@ -106,7 +105,7 @@ class LoongONNXPredictor:
         )
 
     def preprocess(
-        self, image: Union[np.ndarray, None]
+        self, image: np.ndarray | None
     ) -> tuple[np.ndarray, float, tuple[int, int]]:
         """
         图像前处理：缩放 + 填充 + 归一化
@@ -163,7 +162,7 @@ class LoongONNXPredictor:
         batch = np.transpose(tensor, (2, 0, 1))[np.newaxis, ...]
         return batch, scale, (pad_h, pad_w)
 
-    def predict(self, image: Union[np.ndarray, str]) -> InferenceResult:
+    def predict(self, image: np.ndarray | str) -> InferenceResult:
         """
         完整推理流程：前处理 -> ONNX 推理 -> 后处理
 
@@ -221,7 +220,7 @@ class LoongONNXPredictor:
         )
 
     def infer_at_size(
-        self, image: np.ndarray, size: Optional[int] = None
+        self, image: np.ndarray, size: int | None = None
     ) -> np.ndarray:
         """
         在指定分辨率下推理（用于 Dynamic ROI 二级检测）

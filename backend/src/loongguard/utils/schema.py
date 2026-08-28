@@ -9,10 +9,9 @@ LoongGuard 告警日志 Schema
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Optional
 
 
 class AlertSeverity(str, Enum):
@@ -59,7 +58,7 @@ class AlertLog:
     alert_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     # UTC 时间戳
     timestamp: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
     # 告警类型
     alert_type: AlertType = AlertType.DANGEROUS_OBJECT
@@ -68,7 +67,7 @@ class AlertLog:
     # 检测到的框（可能多个）
     detections: list[BoundingBox] = field(default_factory=list)
     # 风险切片图路径（SM4 加密后），None 表示无切片
-    slice_path: Optional[str] = None
+    slice_path: str | None = None
     # 人类可读描述
     description: str = ""
     # 是否已确认/消警

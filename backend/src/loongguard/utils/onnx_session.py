@@ -23,7 +23,12 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from typing import TYPE_CHECKING
+
+# 仅类型检查时导入：运行时保持函数内延迟导入，
+# 以便 onnxruntime 缺失时能优雅降级而非直接崩溃
+if TYPE_CHECKING:
+    import onnxruntime as ort
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +100,8 @@ def select_providers() -> list[str]:
 
 def create_session_options(
     *,
-    intra_op_threads: Optional[int] = None,
-) -> "ort.SessionOptions":  # type: ignore[name-defined]
+    intra_op_threads: int | None = None,
+) -> ort.SessionOptions:  # type: ignore[name-defined]
     """
     创建统一的 ONNX Runtime SessionOptions
 
@@ -135,8 +140,8 @@ def create_session_options(
 def create_session(
     model_path: str,
     *,
-    session_options: Optional["ort.SessionOptions"] = None,  # type: ignore[name-defined]
-) -> "ort.InferenceSession":  # type: ignore[name-defined]
+    session_options: ort.SessionOptions | None = None,
+) -> ort.InferenceSession:
     """
     加载 ONNX 模型并创建推理 Session
 

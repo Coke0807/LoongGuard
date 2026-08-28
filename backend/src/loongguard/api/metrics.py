@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Union
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +130,11 @@ DB_OPERATIONS = Counter(
     ["operation"],  # insert, query, ack, cleanup
 )
 
+RATE_LIMITED = Counter(
+    "loongguard_rate_limited_total",
+    "Requests rejected by per-IP rate limiting",
+)
+
 START_TIME = Gauge(
     "loongguard_uptime_seconds",
     "System uptime in seconds",
@@ -200,7 +204,7 @@ class MetricsTimer:
             result = model.predict(image)
     """
 
-    def __init__(self, histogram: Union[Histogram, _MockMetric]):
+    def __init__(self, histogram: Histogram | _MockMetric):
         self._histogram = histogram
         self._start: float = 0
 

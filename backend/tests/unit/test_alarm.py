@@ -9,13 +9,12 @@ GPIO 告警模块单元测试
 
 from __future__ import annotations
 
-import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from config.settings import AlarmConfig
-from loongguard.alarm.gpio_trigger import GPIOAlarmTrigger, _BUZZER_PATTERNS
+from loongguard.alarm.gpio_trigger import _BUZZER_PATTERNS, GPIOAlarmTrigger
 from loongguard.utils.schema import AlertSeverity
 
 

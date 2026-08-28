@@ -6,19 +6,18 @@ import time
 
 import pytest
 
+import loongguard.api.metrics as metrics_module
 from loongguard.api.metrics import (
+    _HAS_PROMETHEUS,
     ALERT_COUNT,
     ALERT_DEDUP_SUPPRESSED,
     DB_OPERATIONS,
     DETECTION_COUNT,
     FRAME_COUNT,
     UPLOAD_COUNT,
-    MetricsTimer,
     get_metrics_bytes,
     get_metrics_content_type,
-    _HAS_PROMETHEUS,
 )
-import loongguard.api.metrics as metrics_module
 
 # 根据 prometheus_client 是否安装决定跳过测试
 requires_prometheus = pytest.mark.skipif(

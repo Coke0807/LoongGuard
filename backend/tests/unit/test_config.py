@@ -25,7 +25,6 @@ from config.settings import (
     validate_config,
 )
 
-
 # ── AppConfig 默认值测试 ──────────────────────────────────────
 
 
@@ -48,14 +47,19 @@ class TestAppConfigDefaults:
         cfg = AppConfig()
         assert cfg.debug is False
 
-    def test_detection_config_classes_has_8_items(self):
-        """DetectionConfig.classes 默认应包含 8 个检测类别"""
+    def test_detection_config_classes_has_2_items(self):
+        """DetectionConfig.classes 默认应包含 2 个检测类别（剪刀 + 美工刀）
+
+        设计说明：
+            当前 MVP 仅检测两类危险物品，完整 8 类扩展为未来功能。
+            best.onnx 模型仅训练了这两类，保持代码与模型一致。
+        """
         cfg = DetectionConfig()
-        assert len(cfg.classes) == 8
-        # 验证所有关键类别都在
+        assert len(cfg.classes) == 2
+        # 验证关键类别都在
         expected = {
-            "magnetic_bead", "button_battery", "scissors", "utility_knife",
-            "needle", "glass_shard", "wire", "small_toy_part",
+            "scissor",
+            "utility_knife",
         }
         assert set(cfg.classes) == expected
 
@@ -63,7 +67,7 @@ class TestAppConfigDefaults:
         """DetectionConfig 默认量化标志和阈值应与 default.json 一致"""
         cfg = DetectionConfig()
         assert cfg.input_size == 640
-        assert cfg.conf_threshold == 0.30
+        assert cfg.conf_threshold == 0.80
         assert cfg.iou_threshold == 0.50
         assert cfg.quantized is False
         assert cfg.backend == "onnxruntime"
@@ -111,7 +115,7 @@ class TestLoadConfig:
         cfg = load_config(None)
         assert isinstance(cfg, AppConfig)
         assert cfg.camera.width == 640
-        assert cfg.detection.conf_threshold == 0.30
+        assert cfg.detection.conf_threshold == 0.80
         assert cfg.log_level == "INFO"
 
     def test_load_config_from_real_json(self):
@@ -145,7 +149,7 @@ class TestLoadConfig:
             assert cfg.camera.width == 640
             assert cfg.camera.height == 480
             assert cfg.camera.device == "0"
-            assert cfg.detection.conf_threshold == 0.30
+            assert cfg.detection.conf_threshold == 0.80
             assert cfg.debug is False
         finally:
             Path(tmp_path).unlink()

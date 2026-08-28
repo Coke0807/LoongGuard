@@ -3,10 +3,8 @@
 import time
 from dataclasses import dataclass
 
-import pytest
-
 from loongguard.alerts.dedup import AlertDeduplicator
-from loongguard.utils.schema import AlertLog, AlertType, AlertSeverity, BoundingBox
+from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType, BoundingBox
 
 
 @dataclass

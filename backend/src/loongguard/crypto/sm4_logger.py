@@ -21,7 +21,6 @@ import logging
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 from config import CryptoConfig
 from loongguard.utils.schema import AlertLog
@@ -150,7 +149,7 @@ class SM4Logger:
         """当前加密模式"""
         return self._mode
 
-    def encrypt_and_store(self, alert: AlertLog) -> Optional[str]:
+    def encrypt_and_store(self, alert: AlertLog) -> str | None:
         """
         加密告警日志并写入磁盘
 
@@ -181,7 +180,7 @@ class SM4Logger:
             logger.exception("Failed to encrypt and store alert")
             return None
 
-    def encrypt_slice(self, image_bytes: bytes, alert_id: str) -> Optional[str]:
+    def encrypt_slice(self, image_bytes: bytes, alert_id: str) -> str | None:
         """
         加密风险切片图并写入磁盘
 

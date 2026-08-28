@@ -1,6 +1,7 @@
 """创建 16 字节 SM4 测试密钥和 Mock 教室视频"""
-from pathlib import Path
 import os
+from pathlib import Path
+
 
 def create_sm4_key():
     key_path = Path("config/.sm4_key")

@@ -202,15 +202,13 @@ class CameraThread(QThread):
         self.height = 800
         self.voice_player = VoicePlayer()
 
-    def draw_qimg_time(self, rgb_arr):
-        """在 RGB 帧上叠加时间戳，返回带时间戳的 RGB 数组"""
+    def draw_qimg_time(self, bgr_arr):
+        """在 BGR 帧上直接叠加时间戳（避免冗余色彩转换），返回 BGR 数组"""
         from datetime import datetime
-        h, w, c = rgb_arr.shape
         now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        temp_bgr = cv2.cvtColor(rgb_arr, cv2.COLOR_RGB2BGR)
-        cv2.putText(temp_bgr, now_text, (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
-        cv2.putText(temp_bgr, now_text, (12,32), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,0), 1)
-        return cv2.cvtColor(temp_bgr, cv2.COLOR_BGR2RGB)
+        cv2.putText(bgr_arr, now_text, (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+        cv2.putText(bgr_arr, now_text, (12,32), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,0), 1)
+        return bgr_arr
 
     def run(self):
         self.running = True
@@ -240,13 +238,13 @@ class CameraThread(QThread):
             write_log("CAM", f"MJPEG 流已连接: {self.stream_url}")
             self.cam_status_signal.emit(True)
 
-            buf = b""
+            buf = bytearray()  # bytearray 支持原地拼接，避免 bytes 不可变对象的 GC 压力
             boundary = b"--frame"
             while self.running:
                 chunk = resp.read(65536)
                 if not chunk:
                     break
-                buf += chunk
+                buf.extend(chunk)
 
                 # 从缓冲区逐个提取完整帧
                 while True:
@@ -262,14 +260,18 @@ class CameraThread(QThread):
                     next_b = buf.find(boundary, jpeg_start)
                     if next_b == -1:
                         break
-                    jpeg_bytes = buf[jpeg_start:next_b].rstrip(b"\r\n")
-                    buf = buf[next_b:]
+                    jpeg_bytes = bytes(buf[jpeg_start:next_b]).rstrip(b"\r\n")
+                    del buf[:next_b]  # 原地删除已消费数据，避免内存增长
 
                     if jpeg_bytes:
                         self._handle_jpeg(jpeg_bytes)
 
     def _handle_jpeg(self, jpeg_bytes: bytes):
-        """解码一帧 JPEG，更新最新帧并发出各信号"""
+        """解码一帧 JPEG，更新最新帧并发出各信号
+
+        优化：img 本身已是 BGR（cv2.IMREAD_COLOR 默认 BGR），
+        直接复用做时间戳叠加 + 色彩转换，减少冗余拷贝。
+        """
         img = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
         if img is None:
             write_log("WARN", "JPEG 解码失败，跳过该帧")
@@ -278,7 +280,6 @@ class CameraThread(QThread):
         h, w = img.shape[:2]
         self.width = w
         self.height = h
-        self.latest_bgr = img.copy()
 
         # 估算帧率：依据上一次到本次的时间间隔
         now = time.monotonic()
@@ -290,17 +291,20 @@ class CameraThread(QThread):
 
         # 供录制使用原始帧（含后端标注，但无前端时间戳）
         self.raw_frame_signal.emit(img)
-        self.yolo_frame_signal.emit(img)
         self.cam_info_signal.emit(w, h, self.fps)
 
-        # 叠加时间戳后显示
-        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        rgb_with_time = self.draw_qimg_time(rgb)
+        # 保留一份 BGR 副本供外部取帧（如手动抓拍）
+        self.latest_bgr = img.copy()
+
+        # 叠加时间戳（直接在 BGR 域操作，省掉 RGB↔BGR 双重转换）
+        img_with_time = self.draw_qimg_time(img)
+        # BGR -> RGB 供 QImage 显示
+        rgb = cv2.cvtColor(img_with_time, cv2.COLOR_BGR2RGB)
         # 用 .copy() 让 QImage 持有数据副本（不引用 numpy 缓冲区）。
         # 否则跨线程队列投递到 GUI 线程时，numpy 数组可能已被释放，
         # Qt 再读取该内存会触发 access violation 崩溃。
         qimg = QImage(
-            rgb_with_time.data, w, h, w * 3, QImage.Format.Format_RGB888
+            rgb.data, w, h, w * 3, QImage.Format.Format_RGB888
         ).copy()
         self.ui_frame_signal.emit(qimg)
 

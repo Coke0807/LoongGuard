@@ -8,10 +8,10 @@
 
 转换日志输出到控制台和 convert_best_log.txt
 """
+import logging
 import os
 import sys
 import time
-import logging
 from datetime import datetime
 
 logging.basicConfig(
@@ -44,10 +44,10 @@ def convert():
     logger.info(f'源文件大小: {os.path.getsize(pt_path) / (1024 * 1024):.2f} MB')
 
     try:
-        import torch
+        import numpy as np
         import onnx
         import onnxruntime as ort
-        import numpy as np
+        import torch
 
         logger.info(f'PyTorch: {torch.__version__} | ONNX: {onnx.__version__} | ORT: {ort.__version__}')
 
@@ -190,7 +190,7 @@ def convert():
         logger.info('转换成功!')
         logger.info(f'  输出: {onnx_path}')
         logger.info(f'  输入: (batch, 3, {INPUT_SIZE}, {INPUT_SIZE}) float32')
-        logger.info(f'  输出: (batch, 300, 6) [x1, y1, x2, y2, conf, cls]')
+        logger.info('  输出: (batch, 300, 6) [x1, y1, x2, y2, conf, cls]')
         if names:
             logger.info(f'  类别: {names}')
         logger.info('=' * 60)

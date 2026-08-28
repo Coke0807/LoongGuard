@@ -17,8 +17,8 @@
     LG_DEDUP_POSITION_GRID_SIZE=50
 """
 
-import time
 import logging
+import time
 
 from loongguard.utils.schema import AlertLog
 

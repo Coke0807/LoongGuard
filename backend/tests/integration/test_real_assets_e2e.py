@@ -91,7 +91,7 @@ class TestRealAssetPipeline:
             await pipeline.start()
             try:
                 await asyncio.wait_for(pipeline.run(), timeout=10.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             await pipeline.stop()
 

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
@@ -56,7 +55,7 @@ class FrameDiffDetector:
         self._config = config
 
     def detect(
-        self, current_gray: np.ndarray, prev_gray: Optional[np.ndarray]
+        self, current_gray: np.ndarray, prev_gray: np.ndarray | None
     ) -> list[MotionRegion]:
         """
         检测当前帧与上一帧之间的运动区域

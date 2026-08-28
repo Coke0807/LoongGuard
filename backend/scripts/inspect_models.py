@@ -15,15 +15,12 @@
 
 from __future__ import annotations
 
-import os
 import sys
 import time
-import struct
-import traceback
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -45,8 +42,8 @@ class ModelReport:
     model_path: str
     model_size_mb: float
     format: str
-    findings: List[Finding] = field(default_factory=list)
-    summary: Dict[str, Any] = field(default_factory=dict)
+    findings: list[Finding] = field(default_factory=list)
+    summary: dict[str, Any] = field(default_factory=dict)
 
 
 # ── 检测函数 ──────────────────────────────────────────────────
@@ -54,7 +51,7 @@ class ModelReport:
 def inspect_onnx_model(model_path: str, model_label: str = "") -> ModelReport:
     """对单个 ONNX 模型进行全面转译质量检测"""
     import onnx
-    from onnx import numpy_helper, TensorProto
+    from onnx import TensorProto, numpy_helper
 
     path = Path(model_path)
     size_mb = path.stat().st_size / (1024 * 1024)
@@ -156,7 +153,7 @@ def inspect_onnx_model(model_path: str, model_label: str = "") -> ModelReport:
     op_types = Counter(n.op_type for n in nodes)
     total_nodes = len(nodes)
     print(f"\n   总节点数: {total_nodes}")
-    print(f"   算子类型分布:")
+    print("   算子类型分布:")
     for op, count in op_types.most_common():
         print(f"     - {op}: {count}")
 
@@ -194,13 +191,9 @@ def inspect_onnx_model(model_path: str, model_label: str = "") -> ModelReport:
         standard_ops = set()
 
     custom_ops = []
-    deprecated_ops = []
     for op_name, count in op_types.items():
         if standard_ops and op_name not in standard_ops:
             custom_ops.append((op_name, count))
-        # 已知的低效/弃用算子
-        if op_name in ("Upsample", "Resize") and count > 0:
-            pass  # Resize 是正常算子
 
     if custom_ops:
         add(Finding("算子", "CRITICAL",
@@ -215,7 +208,6 @@ def inspect_onnx_model(model_path: str, model_label: str = "") -> ModelReport:
     print("   验证 ONNX Runtime 算子兼容性...")
     try:
         import onnxruntime as ort
-        available_eps = ort.get_available_providers()
         preferred = ["CPUExecutionProvider"]
         opts = ort.SessionOptions()
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
@@ -455,7 +447,7 @@ def inspect_onnx_model(model_path: str, model_label: str = "") -> ModelReport:
 
     # 5b. 输出形状验证
     if latencies and outputs:
-        print(f"\n   输出张量信息:")
+        print("\n   输出张量信息:")
         for i, out in enumerate(session_outputs):
             actual_shape = outputs[i].shape if i < len(outputs) else "N/A"
             actual_dtype = outputs[i].dtype if i < len(outputs) else "N/A"
@@ -503,7 +495,7 @@ def inspect_onnx_model(model_path: str, model_label: str = "") -> ModelReport:
 
     # 6b. 检查输出格式与推理代码预期的匹配
     if latencies and outputs:
-        for i, out in enumerate(session_outputs):
+        for i, _ in enumerate(session_outputs):
             actual_shape = outputs[i].shape
             if len(actual_shape) >= 3:
                 last_dims = actual_shape[-2:]
@@ -570,7 +562,7 @@ def print_report(report: ModelReport) -> None:
     print(f"{'='*70}")
 
     if report.summary:
-        print(f"\n  关键指标:")
+        print("\n  关键指标:")
         for k, v in report.summary.items():
             print(f"    {k}: {v}")
 
@@ -579,7 +571,7 @@ def print_report(report: ModelReport) -> None:
     elif warning_count > 0:
         print(f"\n  >>> 存在 {warning_count} 个 WARNING 级别问题，建议关注。")
     else:
-        print(f"\n  >>> 所有检测项通过，模型转译质量良好。")
+        print("\n  >>> 所有检测项通过，模型转译质量良好。")
 
 
 def main() -> None:
@@ -606,7 +598,7 @@ def main() -> None:
     # ── 汇总对比 ───────────────────────────────────────────────
     if len(reports) > 1:
         print(f"\n\n{'#'*70}")
-        print(f"  跨模型对比汇总")
+        print("  跨模型对比汇总")
         print(f"{'#'*70}")
 
         print(f"\n  {'模型':<40} {'大小(MB)':<12} {'参数量':<15} {'平均延迟':<12} {'CRITICAL':<10} {'WARNING':<10}")
@@ -626,7 +618,7 @@ def main() -> None:
     total_warning = sum(len([f for f in r.findings if f.severity == "WARNING"]) for r in reports)
 
     print(f"\n{'='*70}")
-    print(f"  总体评估")
+    print("  总体评估")
     print(f"{'='*70}")
 
     if total_critical == 0 and total_warning == 0:
@@ -637,8 +629,8 @@ def main() -> None:
         if total_warning > 0:
             print(f"  WARNING 问题: {total_warning} 个 — 建议在上线前处理。")
 
-    print(f"\n  注意: 性能数据基于 x86 CPU，实际 LoongArch 2K3000 性能需以实机为准。")
-    print(f"  建议: 在 QEMU Loongnix_v25 和 3A5000 主机上分别运行本脚本进行交叉验证。")
+    print("\n  注意: 性能数据基于 x86 CPU，实际 LoongArch 2K3000 性能需以实机为准。")
+    print("  建议: 在 QEMU Loongnix_v25 和 3A5000 主机上分别运行本脚本进行交叉验证。")
 
 
 if __name__ == "__main__":

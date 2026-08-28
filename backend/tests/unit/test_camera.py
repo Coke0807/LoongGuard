@@ -10,13 +10,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import cv2
 import numpy as np
 import pytest
 
 from config import CameraConfig
-from loongguard.camera.v4l2_capture import Frame, V4L2Capture
 from loongguard.camera.frame_buffer import FrameBuffer
+from loongguard.camera.v4l2_capture import Frame, V4L2Capture
 
 # 项目根目录下的 mock 视频路径
 MOCK_VIDEO = str(Path(__file__).parent.parent / "mock_classroom.mp4")

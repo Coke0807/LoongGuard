@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from config import NotificationConfig
 from loongguard.utils.schema import AlertLog, AlertSeverity
@@ -48,7 +48,7 @@ class AlertNotifier:
 
     def __init__(self, config: NotificationConfig) -> None:
         self._config = config
-        self._session: Optional[Any] = None
+        self._session: Any | None = None
         self._min_severity = _parse_severity(config.min_severity)
 
     async def start(self) -> None:

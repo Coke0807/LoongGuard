@@ -1,6 +1,40 @@
+import os
+
+
+# ── 加载项目根目录 .env（前后端统一环境变量，零第三方依赖）──────
+# 必须在 import ui.threads 之前执行：threads 模块导入时即读取
+# LG_WS_URL / LG_STREAM_URL（见 threads.py），遗漏会导致前端用到默认地址。
+def _load_project_dotenv() -> None:
+    """将项目根目录 .env 注入环境变量；已显式设置的变量优先，不覆盖。"""
+    # __file__ = frontend/ui/main.py -> 上溯三层即项目根目录
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    env_path = os.path.join(root, ".env")
+    if not os.path.isfile(env_path):
+        return
+    try:
+        with open(env_path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if "#" in value:  # 去除行内注释
+            value = value.split("#", 1)[0].rstrip()
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = value
+
+
+_load_project_dotenv()
+
+
 import sys
 import math
-import os
 import subprocess
 import numpy as np
 import time
@@ -370,7 +404,7 @@ class KindergartenGuardMain(QMainWindow):
     def start_camera(self):
         self.cam_thread = CameraThread(dev_id=0)
         self.cam_thread.ui_frame_signal.connect(self.update_cam_ui)
-        self.cam_thread.yolo_frame_signal.connect(self.yolo_infer_frame)
+        # yolo_frame_signal 已移除：后端 VideoHub 统一绘制检测框，前端无需本地推理
         self.cam_thread.cam_status_signal.connect(self.set_camera_status)
         self.cam_thread.raw_frame_signal.connect(self.on_raw_frame)
         self.cam_thread.start()

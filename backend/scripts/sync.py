@@ -8,14 +8,13 @@ LoongGuard 项目同步脚本
     python scripts/sync.py --dry-run  # 仅预览，不实际传输
 """
 
-import os
-import sys
+import argparse
 import hashlib
 import logging
-import argparse
+import os
+import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
 
 import paramiko
 
@@ -23,7 +22,7 @@ import paramiko
 # 配置管理（集中定义，便于修改）
 # ============================================================================
 
-SYNC_CONFIG: Dict = {
+SYNC_CONFIG: dict = {
     "remote": {
         "host": os.environ.get("LG_SSH_HOST", ""),
         "port": int(os.environ.get("LG_SSH_PORT", "22")),
@@ -33,7 +32,10 @@ SYNC_CONFIG: Dict = {
     "remote_dir": "/home/cc/project/LoongGuard/",
     "sync_dirs": ["src", "config", "tests", "scripts", "models", "docs"],
     "sync_files": ["requirements.txt", "CLAUDE.md", "项目背景.md"],
-    "always_ignore_dirs": {".git", "__pycache__", ".pytest_cache", "venv", ".venv", ".mypy_cache", ".ruff_cache", "logs"},
+    "always_ignore_dirs": {
+        ".git", "__pycache__", ".pytest_cache", "venv", ".venv",
+        ".mypy_cache", ".ruff_cache", "logs",
+    },
     "always_ignore_files": {"*.pyc", "*.pyo", "*.pyd", ".env.local", ".env"},
     # models/ 在 .gitignore 中被排除（避免提交大文件），但同步到龙芯时必须包含
     # tests/mock_ 被 tests/*.mp4 排除，但单元测试依赖 mock 视频
@@ -82,18 +84,18 @@ logger = setup_logging()
 class GitignoreParser:
     """
     解析 .gitignore 文件并提供路径匹配功能
-    
+
     核心逻辑：
     - 读取项目根目录的 .gitignore 文件
     - 使用 pathspec 库进行模式匹配（如果可用）
     - 否则使用简化的 glob 匹配
     """
-    
+
     def __init__(self, root_dir: str):
         self.root_dir = Path(root_dir)
-        self.patterns: List[str] = []
+        self.patterns: list[str] = []
         self._load_gitignore()
-    
+
     def _load_gitignore(self) -> None:
         """加载 .gitignore 文件中的规则"""
         gitignore_path = self.root_dir / ".gitignore"
@@ -102,7 +104,7 @@ class GitignoreParser:
             return
 
         try:
-            with open(gitignore_path, "r", encoding="utf-8") as f:
+            with open(gitignore_path, encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     # 跳过空行和注释
@@ -111,7 +113,7 @@ class GitignoreParser:
             logger.debug(f"从 .gitignore 加载了 {len(self.patterns)} 条规则")
         except Exception as e:
             logger.warning(f"读取 .gitignore 失败: {e}")
-    
+
     def _normalize_pattern(self, pattern: str) -> str:
         """标准化模式字符串"""
         # 移除前导斜杠
@@ -121,7 +123,7 @@ class GitignoreParser:
         if pattern.endswith("/"):
             pattern = pattern[:-1]
         return pattern
-    
+
     def is_ignored(self, rel_path: str, is_dir: bool = False) -> bool:
         """
         检查路径是否应该被忽略
@@ -183,7 +185,7 @@ class GitignoreParser:
 def calculate_file_hash(file_path: str) -> str:
     """
     计算文件的 MD5 哈希值
-    
+
     用途：比较本地和远程文件是否相同，避免不必要的传输
     """
     hash_md5 = hashlib.md5()
@@ -202,22 +204,22 @@ def calculate_file_hash(file_path: str) -> str:
 
 class SyncStats:
     """跟踪同步过程的统计信息"""
-    
+
     def __init__(self):
         self.files_transferred = 0
         self.files_skipped = 0
         self.files_ignored = 0
         self.directories_created = 0
-        self.errors: List[Tuple[str, str]] = []  # (文件路径, 错误信息)
+        self.errors: list[tuple[str, str]] = []  # (文件路径, 错误信息)
         self.start_time = datetime.now()
-    
+
     def add_error(self, file_path: str, error: str):
         self.errors.append((file_path, error))
-    
+
     def print_summary(self):
         """打印同步结果摘要"""
         duration = (datetime.now() - self.start_time).total_seconds()
-        
+
         print("\n" + "=" * 60)
         print("同步完成!")
         print("=" * 60)
@@ -227,14 +229,14 @@ class SyncStats:
         print(f"创建目录数:     {self.directories_created}")
         print(f"错误数量:       {len(self.errors)}")
         print(f"耗时:           {duration:.2f} 秒")
-        
+
         if self.errors:
             print("\n错误详情:")
             for file_path, error in self.errors:
                 print(f"  - {file_path}: {error}")
-        
+
         print("=" * 60)
-        
+
         # 记录到日志
         logger.info(f"同步完成 - 传输:{self.files_transferred}, 跳过:{self.files_skipped}, "
                     f"忽略:{self.files_ignored}, 错误:{len(self.errors)}, 耗时:{duration:.2f}s")
@@ -246,34 +248,34 @@ class SyncStats:
 class LoongGuardSyncer:
     """
     LoongGuard 项目同步器
-    
+
     职责：
     - 建立 SSH/SFTP 连接
     - 扫描本地文件并应用过滤规则
     - 比较文件差异，仅传输修改过的文件
     - 记录传输日志和统计信息
     """
-    
-    def __init__(self, config: Dict, dry_run: bool = False):
+
+    def __init__(self, config: dict, dry_run: bool = False):
         self.config = config
         self.dry_run = dry_run
-        self.ssh: Optional[paramiko.SSHClient] = None
-        self.sftp: Optional[paramiko.SFTPClient] = None
-        self.gitignore_parser: Optional[GitignoreParser] = None
+        self.ssh: paramiko.SSHClient | None = None
+        self.sftp: paramiko.SFTPClient | None = None
+        self.gitignore_parser: GitignoreParser | None = None
         self.stats = SyncStats()
-        self.remote_file_hashes: Dict[str, str] = {}
-        
+        self.remote_file_hashes: dict[str, str] = {}
+
         # 确定本地项目根目录
         if config["local_root"]:
             self.local_root = Path(config["local_root"])
         else:
             # 默认为脚本所在目录的父目录
             self.local_root = Path(__file__).parent.parent
-        
+
         logger.info(f"本地项目根目录: {self.local_root}")
         logger.info(f"远程目标路径: {config['remote_dir']}")
         logger.info(f"同步模式: {'预览' if dry_run else '实际传输'}")
-    
+
     def connect(self) -> bool:
         """
         建立 SSH 连接
@@ -291,7 +293,7 @@ class LoongGuardSyncer:
         if not host or not username:
             raise RuntimeError(
                 "SSH 连接参数未配置。请设置环境变量 LG_SSH_HOST, LG_SSH_USER, LG_SSH_PASS，"
-                "或复制 .env.example 为 .env 并填写。"
+                "或复制项目根目录的 .env.example 为 .env 并填写。"
             )
 
         # 环境变量覆盖（遵循 12-Factor App，密码不硬编码）
@@ -323,15 +325,15 @@ class LoongGuardSyncer:
                 return False
 
             self.ssh.connect(**connect_kwargs)
-            
+
             self.sftp = self.ssh.open_sftp()
             logger.info("SSH 连接建立成功")
-            
+
             # 初始化远程文件哈希缓存
             self._load_remote_hashes()
-            
+
             return True
-            
+
         except paramiko.AuthenticationException:
             logger.error("认证失败: 用户名或密码错误")
             self.stats.add_error("SSH连接", "认证失败")
@@ -344,7 +346,7 @@ class LoongGuardSyncer:
             logger.error(f"连接失败: {e}")
             self.stats.add_error("SSH连接", str(e))
             return False
-    
+
     def disconnect(self):
         """关闭 SSH 连接"""
         if self.sftp:
@@ -352,17 +354,17 @@ class LoongGuardSyncer:
         if self.ssh:
             self.ssh.close()
         logger.debug("SSH 连接已关闭")
-    
+
     def _load_remote_hashes(self):
         """
         加载远程文件的哈希缓存
-        
+
         优化策略：
         - 在远程主机维护一个哈希文件（.sync_hashes.json）
         - 避免每次同步都重新计算所有远程文件的哈希
         """
         remote_hash_file = self.config["remote_dir"] + ".sync_hashes.json"
-        
+
         try:
             # 尝试读取远程哈希缓存
             with self.sftp.open(remote_hash_file, "r") as f:
@@ -372,14 +374,14 @@ class LoongGuardSyncer:
         except Exception:
             logger.debug("远程哈希缓存不存在或无法读取，将重新计算")
             self.remote_file_hashes = {}
-    
+
     def _save_remote_hashes(self):
         """保存远程文件哈希缓存"""
         if not self.remote_file_hashes:
             return
-        
+
         remote_hash_file = self.config["remote_dir"] + ".sync_hashes.json"
-        
+
         try:
             import json
             data = json.dumps(self.remote_file_hashes, indent=2)
@@ -388,11 +390,11 @@ class LoongGuardSyncer:
             logger.debug("远程哈希缓存已更新")
         except Exception as e:
             logger.warning(f"保存远程哈希缓存失败: {e}")
-    
+
     def _ensure_remote_dir(self, remote_path: str):
         """
         确保远程目录存在，不存在则递归创建
-        
+
         Args:
             remote_path: 远程目录的绝对路径
         """
@@ -400,7 +402,7 @@ class LoongGuardSyncer:
             logger.debug(f"[预览] 将创建目录: {remote_path}")
             self.stats.directories_created += 1
             return
-        
+
         try:
             # 检查目录是否已存在
             self.sftp.stat(remote_path)
@@ -409,16 +411,16 @@ class LoongGuardSyncer:
             parent = str(Path(remote_path).parent)
             if parent and parent != remote_path:
                 self._ensure_remote_dir(parent)
-            
+
             try:
                 self.sftp.mkdir(remote_path)
                 self.stats.directories_created += 1
                 logger.debug(f"创建目录: {remote_path}")
-            except IOError as e:
+            except OSError as e:
                 # 目录可能已被其他进程创建
                 if "exists" not in str(e).lower():
                     raise
-    
+
     def _should_ignore(self, rel_path: str, is_dir: bool = False) -> bool:
         """
         检查路径是否应该被忽略
@@ -437,7 +439,7 @@ class LoongGuardSyncer:
                 return False
 
         path_parts = Path(rel_path).parts
-        
+
         # 检查始终忽略的目录
         if is_dir:
             dir_name = Path(rel_path).name
@@ -448,20 +450,20 @@ class LoongGuardSyncer:
             for part in path_parts:
                 if part in self.config["always_ignore_dirs"]:
                     return True
-            
+
             # 检查始终忽略的文件模式
             from fnmatch import fnmatch
             file_name = Path(rel_path).name
             for pattern in self.config["always_ignore_files"]:
                 if fnmatch(file_name, pattern):
                     return True
-        
+
         # 检查 .gitignore 规则
         if self.gitignore_parser and self.gitignore_parser.is_ignored(rel_path, is_dir):
             return True
-        
+
         return False
-    
+
     def _is_file_changed(self, local_path: str, rel_path: str) -> bool:
         """
         检查文件是否已修改
@@ -529,7 +531,7 @@ class LoongGuardSyncer:
         except Exception as e:
             logger.debug(f"计算远程文件哈希失败 {remote_path}: {e}")
             return ""
-    
+
     def _transfer_file(self, local_path: str, rel_path: str):
         """
         传输单个文件到远程主机
@@ -585,11 +587,11 @@ class LoongGuardSyncer:
             mb_total = total_bytes / 1024 / 1024
             sys.stdout.write(f"\r  进度: {mb_done:.1f}/{mb_total:.1f} MB ({pct}%)")
             sys.stdout.flush()
-    
+
     def scan_and_sync(self):
         """
         扫描本地文件并同步到远程主机
-        
+
         流程：
         1. 加载 .gitignore 规则
         2. 遍历配置的同步目录
@@ -599,29 +601,29 @@ class LoongGuardSyncer:
         """
         # 初始化 .gitignore 解析器
         self.gitignore_parser = GitignoreParser(self.local_root)
-        
+
         logger.info("开始扫描本地文件...")
-        
+
         # 收集所有需要同步的文件
-        files_to_sync: List[Tuple[str, str]] = []  # (本地路径, 相对路径)
-        
+        files_to_sync: list[tuple[str, str]] = []  # (本地路径, 相对路径)
+
         # 同步指定的目录
         for dir_name in self.config["sync_dirs"]:
             dir_path = self.local_root / dir_name
             if not dir_path.exists():
                 logger.warning(f"目录不存在: {dir_name}")
                 continue
-            
+
             self._scan_directory(dir_path, dir_name, files_to_sync)
-        
+
         # 同步指定的文件
         for file_name in self.config["sync_files"]:
             file_path = self.local_root / file_name
             if file_path.exists() and not self._should_ignore(file_name):
                 files_to_sync.append((str(file_path), file_name))
-        
+
         logger.info(f"扫描完成，发现 {len(files_to_sync)} 个文件")
-        
+
         # 同步文件
         for local_path, rel_path in files_to_sync:
             if self._is_file_changed(local_path, rel_path):
@@ -629,16 +631,16 @@ class LoongGuardSyncer:
             else:
                 self.stats.files_skipped += 1
                 logger.debug(f"跳过（未修改）: {rel_path}")
-        
+
         # 保存远程哈希缓存
         if not self.dry_run:
             self._save_remote_hashes()
-    
-    def _scan_directory(self, dir_path: Path, rel_prefix: str, 
-                       files: List[Tuple[str, str]]):
+
+    def _scan_directory(self, dir_path: Path, rel_prefix: str,
+                       files: list[tuple[str, str]]):
         """
         递归扫描目录，收集文件列表
-        
+
         Args:
             dir_path: 目录的绝对路径
             rel_prefix: 相对路径前缀
@@ -647,24 +649,24 @@ class LoongGuardSyncer:
         try:
             for item in dir_path.iterdir():
                 rel_path = f"{rel_prefix}/{item.name}"
-                
+
                 if item.is_dir():
                     # 检查目录是否应该被忽略
                     if self._should_ignore(rel_path, is_dir=True):
                         self.stats.files_ignored += 1
                         logger.debug(f"忽略目录: {rel_path}")
                         continue
-                    
+
                     # 递归扫描子目录
                     self._scan_directory(item, rel_path, files)
-                
+
                 elif item.is_file():
                     # 检查文件是否应该被忽略
                     if self._should_ignore(rel_path, is_dir=False):
                         self.stats.files_ignored += 1
                         logger.debug(f"忽略文件: {rel_path}")
                         continue
-                    
+
                     files.append((str(item), rel_path))
         except PermissionError as e:
             logger.warning(f"权限不足，无法访问 {dir_path}: {e}")
@@ -700,7 +702,7 @@ def main():
         SYNC_CONFIG["remote"]["password"] = args.password
     if args.remote_dir:
         SYNC_CONFIG["remote_dir"] = args.remote_dir
-    
+
     # 创建同步器并执行
     syncer = LoongGuardSyncer(SYNC_CONFIG, dry_run=args.dry_run)
 

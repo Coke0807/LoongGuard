@@ -11,8 +11,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
 import numpy as np
+import pytest
 
 # 将项目根目录与 src 目录加入 sys.path（src-layout：包位于 backend/src/loongguard）
 PROJECT_ROOT = Path(__file__).parent.parent

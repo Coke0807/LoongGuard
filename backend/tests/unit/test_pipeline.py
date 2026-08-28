@@ -14,7 +14,6 @@ Pipeline 核心编排器单元测试
 
 from __future__ import annotations
 
-import asyncio
 import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,11 +21,10 @@ import numpy as np
 import pytest
 
 from config.settings import AppConfig
+from loongguard.camera.v4l2_capture import Frame
+from loongguard.motion.frame_diff import MotionRegion
 from loongguard.pipeline import Pipeline
 from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType, BoundingBox
-from loongguard.motion.frame_diff import MotionRegion
-from loongguard.camera.v4l2_capture import Frame
-
 
 # ── Helpers ────────────────────────────────────────────────
 
@@ -337,6 +335,9 @@ class TestPipelineProcessFrame:
     ) -> None:
         """
         pose 推理抛出未预期异常时，主链路（危险物品告警）继续执行
+
+        说明：持续性跟踪器要求物体持续出现超过 1 秒才触发告警，
+        因此第一次调用仅启动跟踪，第二次调用模拟时间推进后才触发告警。
         """
         frame = _make_frame()
         region = _make_motion_region()
@@ -346,6 +347,7 @@ class TestPipelineProcessFrame:
         pipeline._pose.should_run = MagicMock(return_value=True)  # type: ignore[method-assign]
         pipeline._pose.mark_ran = MagicMock()  # type: ignore[method-assign]
 
+        # 第一次调用：物体首次出现，开始跟踪但未达到 1 秒持续阈值
         with patch.object(pipeline._motion, "detect", return_value=[region]), \
              patch.object(pipeline._roi_scheduler, "process", return_value=[alert]), \
              patch.object(pipeline._pose, "detect_prone", side_effect=RuntimeError("boom")), \
@@ -355,8 +357,24 @@ class TestPipelineProcessFrame:
             # 不应抛异常
             await pipeline._process_frame(frame)
 
+        # 第一次调用时物体刚被跟踪，未达到 1s 持续阈值，不应触发告警
+        assert mock_handle.await_count == 0
+
+        # 第二次调用：模拟时间推进 1.1 秒，使物体持续超过 1 秒阈值
+        import time as _time
+        with patch.object(pipeline._motion, "detect", return_value=[region]), \
+             patch.object(pipeline._roi_scheduler, "process", return_value=[alert]), \
+             patch.object(pipeline._pose, "detect_prone", side_effect=RuntimeError("boom")), \
+             patch.object(pipeline, "_handle_alert", new_callable=AsyncMock) as mock_handle2, \
+             patch.object(pipeline._api, "video_hub") as mock_hub2, \
+             patch("loongguard.alerts.persistence.time.monotonic",
+                   return_value=_time.monotonic() + 1.1):
+            mock_hub2.push_frame = MagicMock()
+            # 不应抛异常
+            await pipeline._process_frame(frame)
+
         # 危险物品告警仍应被处理（pose 异常不影响主链路）
-        assert mock_handle.await_count >= 1
+        assert mock_handle2.await_count >= 1
 
 
 class TestPipelineHandleAlert:
@@ -432,3 +450,53 @@ class TestPipelineDedupCleanup:
             await pipeline._process_frame(frame)
 
         mock_cleanup.assert_called_once()
+
+
+class TestPipelineDbBackup:
+    """数据库定期备份测试（回归：Path 未导入导致备份静默失败）"""
+
+    def test_backup_db_once_creates_backup_file(self, pipeline, tmp_path) -> None:
+        """_backup_db_once 应生成备份文件并返回 True"""
+        from datetime import datetime
+
+        from loongguard.db.database import AlertDatabase
+
+        # 初始化真实 SQLite（临时目录），使 backup() 可用
+        pipeline._config.database.backup_dir = str(tmp_path / "backup")
+        pipeline._db = AlertDatabase(str(tmp_path / "main.db"))
+        pipeline._db.initialize()
+        try:
+            ok = pipeline._backup_db_once(datetime.now())
+            assert ok is True
+            backups = list((tmp_path / "backup").glob("loongguard_*.db"))
+            assert len(backups) == 1
+        finally:
+            pipeline._db.close()
+
+    def test_backup_db_once_cleans_expired_backups(self, pipeline, tmp_path) -> None:
+        """超期备份文件应被清理"""
+        import os
+        from datetime import datetime
+
+        from loongguard.db.database import AlertDatabase
+
+        pipeline._config.database.backup_dir = str(tmp_path / "backup")
+        pipeline._config.database.backup_retention_days = 7
+        (tmp_path / "backup").mkdir(parents=True)
+
+        # 制造一个 mtime 为 30 天前的过期备份
+        stale = tmp_path / "backup" / "loongguard_20200101_000000.db"
+        stale.write_bytes(b"stale")
+        old_ts = datetime.now().timestamp() - 30 * 86400
+        os.utime(stale, (old_ts, old_ts))
+
+        pipeline._db = AlertDatabase(str(tmp_path / "main.db"))
+        pipeline._db.initialize()
+        try:
+            pipeline._backup_db_once(datetime.now())
+            names = {p.name for p in (tmp_path / "backup").glob("loongguard_*.db")}
+            assert stale.name not in names
+            # 新备份应存在
+            assert len(names) == 1
+        finally:
+            pipeline._db.close()

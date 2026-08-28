@@ -21,7 +21,6 @@ from config.settings import CryptoConfig
 from loongguard.crypto.sm4_logger import SM4Logger, _pkcs7_pad, _pkcs7_unpad
 from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType
 
-
 # ── 常量 ──────────────────────────────────────────────────────
 
 _SM4_KEY_LEN = 16
@@ -145,7 +144,7 @@ class TestSM4Encrypt:
 
     def test_different_inputs_produce_different_outputs(
         self, sm4_instance: SM4Logger
-    ) -> """None""":
+    ) -> None:
         """不同明文应产生不同密文"""
         enc_a = sm4_instance._sm4_encrypt(b"message_A")
         enc_b = sm4_instance._sm4_encrypt(b"message_B")

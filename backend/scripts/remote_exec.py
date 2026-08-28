@@ -17,15 +17,14 @@ LoongGuard 远程执行脚本
     python scripts/remote_exec.py sync
 
     # 在远程主机执行自定义命令
-    python scripts/remote_exec.py exec --cmd "python -c 'import onnxruntime; print(onnxruntime.get_available_providers())'"
+    python scripts/remote_exec.py exec --cmd "python -c 'import onnxruntime as o; print(o.get_available_providers())'"
 """
 
-import os
-import sys
 import argparse
 import logging
+import os
+import sys
 from pathlib import Path
-from typing import Optional
 
 import paramiko
 
@@ -50,7 +49,7 @@ class RemoteExecutor:
 
     def __init__(self, config: dict):
         self.config = config
-        self.ssh: Optional[paramiko.SSHClient] = None
+        self.ssh: paramiko.SSHClient | None = None
         self.logger = logging.getLogger("RemoteExec")
 
     def connect(self) -> bool:
@@ -61,7 +60,7 @@ class RemoteExecutor:
         if not host or not username:
             raise RuntimeError(
                 "SSH 连接参数未配置。请设置环境变量 LG_SSH_HOST, LG_SSH_USER, LG_SSH_PASS，"
-                "或复制 .env.example 为 .env 并填写。"
+                "或复制项目根目录的 .env.example 为 .env 并填写。"
             )
         try:
             self.logger.info(f"连接 {self.config['host']}:{self.config['port']}...")

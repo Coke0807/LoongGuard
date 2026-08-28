@@ -16,28 +16,35 @@ import signal
 import sys
 import time
 from datetime import datetime, timedelta
-from typing import Optional
+from pathlib import Path
+
+import numpy as np
 
 from config import AppConfig, load_config, validate_config
-from loongguard.camera.v4l2_capture import V4L2Capture, Frame
-from loongguard.camera.frame_buffer import FrameBuffer
-from loongguard.detection.yolo26_nano import YOLO26Nano
-from loongguard.motion.frame_diff import FrameDiffDetector
-from loongguard.roi.roi_scheduler import ROIScheduler
-from loongguard.pose.movenet import MoveNetLightning
 from loongguard.alarm.gpio_trigger import GPIOAlarmTrigger
-from loongguard.crypto.sm4_logger import SM4Logger
-from loongguard.api.server import AlertAPIServer
-from loongguard.api.metrics import (
-    FRAME_COUNT, DETECTION_COUNT, ALERT_COUNT, ALERT_DEDUP_SUPPRESSED,
-    INFERENCE_LATENCY, PIPELINE_FPS, DB_OPERATIONS, MetricsTimer,
-)
-from loongguard.db.database import AlertDatabase
 from loongguard.alerts.dedup import AlertDeduplicator
 from loongguard.alerts.notifier import AlertNotifier
-from loongguard.face import create_face_detector
+from loongguard.alerts.persistence import ObjectPersistenceTracker
+from loongguard.api.metrics import (
+    ALERT_COUNT,
+    ALERT_DEDUP_SUPPRESSED,
+    DB_OPERATIONS,
+    DETECTION_COUNT,
+    FRAME_COUNT,
+    PIPELINE_FPS,
+)
+from loongguard.api.server import AlertAPIServer
+from loongguard.camera.frame_buffer import FrameBuffer
+from loongguard.camera.v4l2_capture import Frame, V4L2Capture
+from loongguard.crypto.sm4_logger import SM4Logger
+from loongguard.db.database import AlertDatabase
+from loongguard.detection.yolo26_nano import YOLO26Nano
+from loongguard.face import SleepPostureClassifier, create_face_detector
 from loongguard.media import create_audio_backend, create_stream_publisher
-from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType
+from loongguard.motion.frame_diff import FrameDiffDetector
+from loongguard.pose.movenet import MoveNetLightning
+from loongguard.roi.roi_scheduler import ROIScheduler
+from loongguard.utils.schema import AlertLog, AlertType, BoundingBox
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +74,8 @@ class Pipeline:
         self._frame_skip_counter: int = 0  # 自适应跳帧计数器
         self._frame_count: int = 0  # 总帧计数（用于周期性任务）
         self._fps_window: list[float] = []  # FPS 滑动窗口
+        self._last_inference_time: float = 0.0  # 上一轮推理耗时（用于自适应节流）
+        self._inference_time_budget: float = 1.0 / max(config.camera.fps, 1)  # 单帧推理时间预算
 
         # ── 子模块实例化 ──────────────────────────────────────
         self._camera = V4L2Capture(config.camera)
@@ -84,6 +93,9 @@ class Pipeline:
         # ── 跨平台预留接口实例化 ────────────────────────────────
         # 人脸检测（Person+Face 组合）：无模型时用 DummyFaceDetector 桩
         self._face = create_face_detector(config.face)
+        # 睡姿分类器：基于人脸状态 + 头部姿态做多分类，
+        # 并对"人脸不可见"做连续帧持续性过滤（防单帧漏检误报）
+        self._posture_classifier = SleepPostureClassifier(config.face)
         # 音频后端（语音唤醒/ASR/通话预留）
         self._audio = create_audio_backend(config.media.audio_backend)
         # 流媒体发布器（MJPEG 桩 / 板端 WebRTC 预留），start() 中注入 video_hub
@@ -92,14 +104,22 @@ class Pipeline:
         # ── 新增：持久化 / 去重 / 保留策略 ────────────────────
         self._db = AlertDatabase(config.database.db_path)
         self._dedup = AlertDeduplicator(config.dedup)
-        self._retention_task: Optional[asyncio.Task] = None
-        self._cleanup_task: Optional[asyncio.Task] = None
+        # 物体持续出现跟踪器：检测结果必须持续出现超过指定时间才允许报警
+        # 设计动机：单帧误检闪烁不触发告警，避免瞬时误报
+        # 可通过环境变量 LG_PERSISTENCE_PERSISTENCE_SEC 调整持续阈值
+        self._persistence_tracker = ObjectPersistenceTracker(
+            persistence_sec=config.persistence.persistence_sec,
+            max_missed_sec=config.persistence.max_missed_sec,
+            position_grid_size=config.persistence.position_grid_size,
+        )
+        self._retention_task: asyncio.Task | None = None
+        self._cleanup_task: asyncio.Task | None = None
 
         # ── 新增：外部告警通知（webhook，无人值守防漏报）──────
         self._notifier = AlertNotifier(config.notify)
 
         # ── 新增：数据库定期备份任务 ─────────────────────────
-        self._backup_task: Optional[asyncio.Task] = None
+        self._backup_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         """
@@ -123,9 +143,19 @@ class Pipeline:
         self._detector.load_model()
         # pose 加载失败时仅降级自身，不阻塞主流程
         self._pose.load_model()
+        # 人脸检测（ONNX 模型加载失败时回退到 DummyFaceDetector 桩）
+        # 设计动机：人脸检测是非核心功能，失败不应阻塞主链路
+        if hasattr(self._face, "load_model"):
+            self._face.load_model()
         # 注入模型健康快照提供者（绑定当前实例方法，避免循环依赖）
         self._api.set_pose_health_provider(self._pose.get_health_snapshot)
         self._api.set_detection_health_provider(self._detector.get_health_snapshot)
+        self._api.set_face_health_provider(
+            lambda: {
+                "available": self._face.is_available(),
+                "posture": self._posture_classifier.get_snapshot(),
+            }
+        )
         self._alarm.setup()
         await self._api.start()
 
@@ -238,13 +268,13 @@ class Pipeline:
             - 灰度转换仅计算一次（当前帧），避免帧缓冲模块重复计算
             - 帧推送到 VideoHub 仅在此处执行一次，移除 run() 中的重复调用
             - 无运动时仅推送原始帧，跳过所有推理
-            - 姿态估计仅在有目标检测结果时执行（避免无目标时的无效推理）
+            - 首帧（无上一帧）时执行全帧推理，确保首次检测即可产出结果
+            - ROI 推理与姿态估计并行执行，缩短单帧处理耗时
+            - 自适应推理跳帧：推理耗时超过 2 倍帧间隔时，中间帧跳过推理
 
         关键约束（修复 #1）：无论处理过程中是否发生异常，都必须在 finally
         块中调用 push_frame，确保前端 MJPEG 视频流不中断。
         """
-        import numpy as np
-
         # 计算当前帧灰度（仅一次，供运动检测使用）
         current_gray = np.dot(
             frame.data[..., :3], [0.299, 0.587, 0.114]
@@ -264,49 +294,82 @@ class Pipeline:
             FRAME_COUNT.inc()
             self._frame_count += 1
 
-            if motion_regions:
+            # 首帧兜底：无上一帧时帧差分无法检测运动，但应执行一次全帧推理
+            # 设计动机：确保首帧即可产出检测结果（特别是静态场景中已有目标物体），
+            # 而非等待第二帧产生运动差分后才开始检测。
+            is_first_frame = prev_gray is None
+
+            if motion_regions or is_first_frame:
                 # 自适应跳帧：大面积运动（如场景切换）时跳过推理
                 # 设计动机：当运动覆盖超过 80% 画面时，通常是场景切换或摄像头抖动，
                 # 此时 YOLO 推理效果差且耗时。跳过推理帧，仅在低运动帧上执行检测。
-                max_ratio = max(r.motion_ratio for r in motion_regions)
-                if max_ratio > 0.80:
-                    self._frame_skip_counter += 1
-                    if self._frame_skip_counter <= 2:
-                        # 跳过推理，仅推送原始帧
-                        self._last_det_boxes = []
-                        return
-                else:
-                    self._frame_skip_counter = 0
+                if motion_regions:
+                    max_ratio = max(r.motion_ratio for r in motion_regions)
+                    if max_ratio > 0.80:
+                        self._frame_skip_counter += 1
+                        if self._frame_skip_counter <= 2:
+                            # 跳过推理，仅推送原始帧
+                            self._last_det_boxes = []
+                            return
+                    else:
+                        self._frame_skip_counter = 0
 
-                # Dynamic ROI 调度（含二级检测）
-                alerts = self._roi_scheduler.process(
-                    frame.data, motion_regions
+                # 自适应推理节流：当上一轮推理耗时超过 2 倍帧间隔时，
+                # 跳过本次推理，仅推送上一帧检测结果，让视频流保持流畅
+                if (
+                    self._last_inference_time > 0
+                    and self._frame_count % 2 == 0
+                    and self._last_inference_time > self._inference_time_budget * 2
+                ):
+                    det_boxes = self._last_det_boxes
+                    return
+
+                # ROI 推理与姿态估计并行执行
+                # 设计动机：YOLO ROI 推理和 MoveNet 姿态估计是两个独立的
+                # CPU 密集型操作，在多核环境下并行执行可显著缩短单帧处理耗时。
+                # 两个推理结果互不依赖（dangerous_object vs prone_sleep），
+                # 合并到 alerts 后统一走后续过滤和告警链路。
+                inference_start = time.monotonic()
+
+                run_pose = (
+                    self._pose.is_available()
+                    and self._pose.should_run(self._frame_count)
                 )
+
+                if run_pose:
+                    # 并行：ROI 检测 + 姿态估计同时执行
+                    roi_task = asyncio.to_thread(
+                        self._roi_scheduler.process, frame.data, motion_regions
+                    )
+                    pose_task = asyncio.to_thread(self._pose.detect_prone, frame.data)
+                    try:
+                        roi_alerts, pose_alerts = await asyncio.gather(
+                            roi_task, pose_task, return_exceptions=True
+                        )
+                    except Exception:
+                        roi_alerts, pose_alerts = [], []
+
+                    # 处理 ROI 结果（可能是异常对象）
+                    if isinstance(roi_alerts, Exception):
+                        logger.exception("ROI inference failed")
+                        roi_alerts = []
+                    alerts.extend(roi_alerts)
+
+                    # 处理姿态结果
+                    if isinstance(pose_alerts, Exception):
+                        logger.exception("Pose detection raised unexpectedly")
+                    elif isinstance(pose_alerts, list):
+                        alerts.extend(pose_alerts)
+                    self._pose.mark_ran(self._frame_count)
+                else:
+                    # 仅 ROI 推理（姿态估计未就绪或未到节流间隔）
+                    alerts = await asyncio.to_thread(
+                        self._roi_scheduler.process, frame.data, motion_regions
+                    )
+
+                self._last_inference_time = time.monotonic() - inference_start
                 for alert in alerts:
                     det_boxes.extend(alert.detections)
-
-                # 姿态估计：基于"运动区域 + 帧节流"独立触发
-                # 设计动机（修复 #bug-decouple-pose）：
-                #   旧实现 if det_boxes: 将俯卧检测耦合到危险物品检测结果，
-                #   导致"画面中只有小孩趴睡、无危险物品"时俯卧检测完全失效。
-                #   新策略：只要画面有运动（间接说明有人活动）且到达推理节流
-                #   间隔，就执行俯卧检测。危险物品检测和俯卧检测是两个独立
-                #   的安全功能，不应相互依赖。
-                # 降级策略：pose 模型未加载成功或单次推理失败时静默跳过。
-                if (
-                    motion_regions
-                    and self._pose.is_available()
-                    and self._pose.should_run(self._frame_count)
-                ):
-                    try:
-                        pose_alerts = self._pose.detect_prone(frame.data)
-                        alerts.extend(pose_alerts)
-                    except Exception:
-                        # 防御性兜底：pose 模块已自带 try/except，此处仅
-                        # 防止未来重构时未捕获的异常影响主链路
-                        logger.exception("Pose detection raised unexpectedly")
-                    finally:
-                        self._pose.mark_ran(self._frame_count)
 
                 # 睡姿（人脸可见性）监测：仅当显式启用时执行
                 # 设计动机（Person+Face 组合，跨平台预留）：
@@ -318,8 +381,40 @@ class Pipeline:
                     and self._face.is_available()
                     and motion_regions
                 ):
-                    sleep_alerts = self._check_sleep_posture(frame.data)
+                    sleep_alerts = await self._check_sleep_posture(frame.data)
                     alerts.extend(sleep_alerts)
+
+                # ── 物体持续出现过滤 ──────────────────────────────────
+                # 设计动机：只有置信度 > 0.8（已由 conf_threshold 保证）
+                # 且目标物体持续出现超过 1 秒的检测结果才允许触发告警，
+                # 避免单帧误检闪烁导致的瞬时误报。
+                persistent_alerts: list[AlertLog] = []
+                if alerts:
+                    now = time.monotonic()
+                    # 收集所有危险物品告警中的检测框，统一更新跟踪器
+                    all_dets: list[BoundingBox] = []
+                    for alert in alerts:
+                        if alert.alert_type == AlertType.DANGEROUS_OBJECT:
+                            all_dets.extend(alert.detections)
+                    # 更新跟踪状态，获取已持续的 key 集合
+                    persistent_keys = self._persistence_tracker.update(
+                        all_dets, now
+                    )
+                    # 过滤告警
+                    for alert in alerts:
+                        if alert.alert_type == AlertType.DANGEROUS_OBJECT:
+                            # 检查该告警的检测结果是否已持续
+                            should_alert = any(
+                                self._persistence_tracker.make_key(det)
+                                in persistent_keys
+                                for det in alert.detections
+                            )
+                            if should_alert:
+                                persistent_alerts.append(alert)
+                        else:
+                            # 非危险物品告警（如俯卧睡姿）直接通过
+                            persistent_alerts.append(alert)
+                    alerts = persistent_alerts
 
                 # 告警处理
                 for alert in alerts:
@@ -408,20 +503,19 @@ class Pipeline:
         # API 实时推送
         await self._api.push_alert(alert)
 
-    def _check_sleep_posture(self, rgb: np.ndarray) -> list[AlertLog]:
+    async def _check_sleep_posture(self, rgb: np.ndarray) -> list[AlertLog]:
         """
-        Person + Face 组合逻辑：画面有运动主体但未检测到人脸 -> 异常睡姿
+        人脸状态 + 头部姿态组合逻辑：多分类睡姿判定
 
         算法：
-            1. 对当前帧执行人脸检测
-            2. 检测到人脸 -> 安全（脸可见，非趴睡）
-            3. 未检测到人脸 -> 判定异常睡姿（俯卧/遮挡/趴睡）
+            1. 对当前帧执行人脸检测（含 5 点关键点）
+            2. 分类器对每张人脸做睡姿分类（FACE_UP/SIDE/TILTED）
+            3. 无人脸时累计"不可见"帧，连续 N 帧触发 PRONE_SLEEP
 
         预留设计（跨平台）：
-            - 此方法仅依赖 FaceDetector 接口，与具体实现解耦
-            - DummyFaceDetector 恒返回人脸，故默认不触发告警
-            - 板端接入真实人脸模型后，可在 detect 结果上进一步限定
-              "Person bbox 内"的人脸，无需改动本方法调用方
+            - 此方法仅依赖 FaceDetector 接口与分类器，与具体实现解耦
+            - DummyFaceDetector 恒返回人脸（无关键点），分类为 FACE_UP，
+              故默认不触发告警
 
         Args:
             rgb: RGB 图像 (H, W, 3)
@@ -429,22 +523,9 @@ class Pipeline:
         Returns:
             告警列表；人脸可见时为空列表
         """
-        faces = self._face.detect(rgb)
-        if faces:
-            # 检测到人脸 -> 安全，不告警
-            return []
-
-        # 人脸不可见 -> 异常睡姿（严重等级最高，窒息风险）
-        logger.warning(
-            "PRONE_SLEEP trigger: 画面存在运动主体但未检测到人脸"
-        )
-        return [
-            AlertLog(
-                alert_type=AlertType.PRONE_SLEEP,
-                severity=AlertSeverity.CRITICAL,
-                description="人脸不可见，儿童可能存在趴睡/遮挡风险",
-            )
-        ]
+        # 人脸 ONNX 推理为阻塞调用，卸载到工作线程
+        faces = await asyncio.to_thread(self._face.detect_with_landmarks, rgb)
+        return self._posture_classifier.evaluate(faces)
 
     async def _retention_loop(self) -> None:
         """
@@ -602,13 +683,17 @@ class Pipeline:
             logger.debug("Debug window render failed", exc_info=True)
 
 
-async def main(config_path: Optional[str] = None) -> None:
+async def main(config_path: str | None = None) -> None:
     """
     应用入口
 
     Args:
         config_path: 配置文件路径，None 使用默认配置
     """
+    # 加载 .env 文件到环境变量（在 load_config 之前执行，确保环境变量可被读取）
+    from config.settings import _load_dotenv
+    _load_dotenv()
+
     config = load_config(config_path)
 
     # 配置校验：启动早期一次性暴露配置错误，阻断启动而非带病运行
@@ -649,7 +734,7 @@ async def main(config_path: Optional[str] = None) -> None:
                 "LG_API_PORT，然后由守护进程自动重启。",
                 config.api.port,
             )
-            raise SystemExit(1)
+            raise SystemExit(1) from e
         raise
 
     logger.info("API: http://localhost:%d", config.api.port)
@@ -669,6 +754,5 @@ async def main(config_path: Optional[str] = None) -> None:
 
 
 if __name__ == "__main__":
-    import sys
     config_path = sys.argv[1] if len(sys.argv) > 1 else "config/default.json"
     asyncio.run(main(config_path))

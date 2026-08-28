@@ -16,12 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import platform
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 from config import AlarmConfig
 from loongguard.utils.schema import AlertSeverity
@@ -84,7 +82,7 @@ def _sysfs_export(pin: int) -> bool:
             return True
         Path("/sys/class/gpio/export").write_text(str(pin))
         return True
-    except (OSError, IOError):
+    except OSError:
         return False
 
 
@@ -93,7 +91,7 @@ def _sysfs_set_dir(pin: int, direction: str = "out") -> bool:
     try:
         Path(f"/sys/class/gpio/gpio{pin}/direction").write_text(direction)
         return True
-    except (OSError, IOError):
+    except OSError:
         return False
 
 
@@ -102,7 +100,7 @@ def _sysfs_write(pin: int, value: int) -> bool:
     try:
         Path(f"/sys/class/gpio/gpio{pin}/value").write_text(str(value))
         return True
-    except (OSError, IOError):
+    except OSError:
         return False
 
 
@@ -110,7 +108,7 @@ def _sysfs_unexport(pin: int) -> None:
     """取消导出 GPIO 引脚"""
     try:
         Path("/sys/class/gpio/unexport").write_text(str(pin))
-    except (OSError, IOError):
+    except OSError:
         pass
 
 
@@ -190,7 +188,7 @@ class GPIOAlarmTrigger:
     def __init__(self, config: AlarmConfig) -> None:
         self._config = config
         self._last_trigger: dict[str, float] = {}
-        self._backend: Optional[object] = None
+        self._backend: object | None = None
         self._is_mock: bool = False
 
     def setup(self) -> None:
