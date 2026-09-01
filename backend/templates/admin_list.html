@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="layout-wrap">
+    <div class="sidebar">
+        <div class="sidebar-logo">
+            <h3><i class="fa-solid fa-child-reaching"></i>幼儿园 AI 安全卫士后端管理系统</h3>
+        </div>
+        <ul class="sidebar-menu">
+            <li><a href="/admin/index"><i class="fa-solid fa-house"></i> 首页仪表盘</a></li>
+            <li><a href="/admin/student"><i class="fa-solid fa-child"></i> 幼儿管理</a></li>
+            <li><a href="/admin/class"><i class="fa-solid fa-chalkboard-user"></i> 班级管理</a></li>
+            <li><a href="/admin/parent"><i class="fa-solid fa-users"></i> 家长管理</a></li>
+            <li><a href="/admin/import"><i class="fa-solid fa-file-import"></i> 批量导入</a></li>
+            <li><a href="/admin/growth"><i class="fa-solid fa-camera"></i> 成长记录</a></li>
+            <li><a href="/admin/notice"><i class="fa-solid fa-bullhorn"></i> 公告管理</a></li>
+            <li><a href="/admin/account"><i class="fa-solid fa-user-shield"></i> 管理员账号</a></li>
+            <li><a href="/admin/logout"><i class="fa-solid fa-right-from-bracket"></i> 退出登录</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <h2 class="page-title"><i class="fa-solid fa-user-shield"></i> 管理员账号管理</h2>
+            <button class="btn btn-pink" onclick="openModal('addAdminModal')">新增管理员</button>
+        </div>
+        <div class="card">
+            <div class="table-wrap">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>登录账号</th>
+                            <th>真实姓名</th>
+                            <th>创建时间</th>
+                        </tr>
+                    </thead>
+                    <tbody id="adminTbody"></tbody>
+                </table>
+            </div>
+            <div class="pagination" id="pageBox"></div>
+        </div>
+    </div>
+</div>
+
+<!-- 新增管理员弹窗 -->
+<div class="modal-mask" id="addAdminModal">
+    <div class="modal-box">
+        <div class="modal-head">
+            <span>新增管理员</span>
+            <span class="modal-close">&times;</span>
+        </div>
+        <form id="addAdminForm">
+            <div class="form-item">
+                <label>登录账号</label>
+                <input class="form-input" name="username" required>
+            </div>
+            <div class="form-item">
+                <label>真实姓名</label>
+                <input class="form-input" name="real_name" required>
+            </div>
+            <div class="form-item">
+                <label>登录密码</label>
+                <input class="form-input" name="pwd" type="password" required>
+            </div>
+            <div style="text-align:right;margin-top:20px;">
+                <button type="button" class="btn btn-gray" onclick="closeModal('addAdminModal')">取消</button>
+                <button type="submit" class="btn btn-pink">提交</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+let page = 1;
+const size = 10;
+async function loadList(p) {
+    page = p;
+    const res = await request(`/api/admin/admin/list?page=${p}&page_size=${size}`);
+    const tb = $('#adminTbody');
+    tb.innerHTML = '';
+    res.data.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${item.id}</td>
+            <td>${item.username}</td>
+            <td>${item.real_name}</td>
+            <td>${item.create_time}</td>
+        `;
+        tb.appendChild(tr);
+    })
+    renderPagination(res.total, p, size, loadList);
+}
+
+// 新增幼儿提交
+$('#addAdminForm').onsubmit = async e => {
+    e.preventDefault();
+    const username = e.target.username.value.trim();
+    const pwd = e.target.pwd.value.trim();
+    const real_name = e.target.real_name.value.trim();
+    // 前端非空校验
+    if (!username || !pwd ) {
+        msg("登录账号或密码不能为空");
+        return;
+    }
+    // 拼查询参数，传给url
+    const url = `/api/admin/admin/create?username=${encodeURIComponent(username)}&pwd=${encodeURIComponent(pwd)}&real_name=${encodeURIComponent(real_name)}`
+    const res = await fetch(url, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Cookie": document.cookie
+        }
+    });
+    const data = await res.json();
+    if (data.code === 0) {
+        msg("创建管理员成功");
+        closeModal('addAdminModal');
+        loadList(1);
+        e.target.reset();
+    } else {
+        msg(data.msg || "创建管理员失败");
+    }
+}
+
+
+window.onload = () => loadList(1);
+</script>
+{% endblock %}

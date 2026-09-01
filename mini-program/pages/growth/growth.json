@@ -1,0 +1,9 @@
+{
+  "navigationBarTitleText": "成长记录",
+  "navigationBarBackgroundColor": "#E8F4FD",
+  "navigationBarTextStyle": "black",
+  "enablePullDownRefresh": true,
+  "backgroundColor": "#E8F4FD",
+  "backgroundTextStyle": "dark",
+  "usingComponents": {}
+}

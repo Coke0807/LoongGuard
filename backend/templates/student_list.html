@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="layout-wrap">
+    <div class="sidebar">
+        <div class="sidebar-logo">
+            <h3><i class="fa-solid fa-child-reaching"></i>幼儿园 AI 安全卫士后端管理系统</h3>
+        </div>
+        <ul class="sidebar-menu">
+            <li><a href="/admin/index"><i class="fa-solid fa-house"></i> 首页仪表盘</a></li>
+            <li><a href="/admin/student" class="active"><i class="fa-solid fa-child"></i> 幼儿管理</a></li>
+	    <li><a href="/admin/class"><i class="fa-solid fa-chalkboard-user"></i> 班级管理</a></li>
+            <li><a href="/admin/parent"><i class="fa-solid fa-users"></i> 家长管理</a></li>
+            <li><a href="/admin/import"><i class="fa-solid fa-file-import"></i> 批量导入</a></li>
+            <li><a href="/admin/growth"><i class="fa-solid fa-camera"></i> 成长记录</a></li>
+            <li><a href="/admin/notice"><i class="fa-solid fa-bullhorn"></i> 公告管理</a></li>
+            <li><a href="/admin/account"><i class="fa-solid fa-user-shield"></i> 管理员账号</a></li>
+            <li><a href="/admin/logout"><i class="fa-solid fa-right-from-bracket"></i> 退出登录</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <h2 class="page-title"><i class="fa-solid fa-child"></i> 幼儿信息管理</h2>
+            <div class="btn-group">
+                <button class="btn btn-pink" onclick="openModal('addStudentModal')">新增幼儿</button>
+		<a href="/api/admin/student/export"><button class="btn btn-primary">导出</button></a>
+            </div>
+        </div>
+        <div class="card">
+            <div style="display:flex;gap:10px;margin-bottom:15px;">
+                <input class="form-input" id="searchKey" placeholder="输入姓名/班级搜索" style="width:300px;">
+                <button class="btn btn-pink" onclick="loadList(1)">搜索</button>
+            </div>
+            <div class="table-wrap">
+                <table class="table" id="studentTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>幼儿姓名</th>
+                            <th>班级</th>
+                            <th>家长远程观看权限</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="pagination" id="pageBox"></div>
+        </div>
+    </div>
+</div>
+
+<!-- 新增幼儿弹窗 -->
+<div class="modal-mask" id="addStudentModal">
+    <div class="modal-box">
+        <div class="modal-head">
+            <span>新增幼儿</span>
+            <span class="modal-close">&times;</span>
+        </div>
+        <form id="addStuForm">
+            <div class="form-item">
+                <label>幼儿姓名</label>
+                <input class="form-input" name="name" required>
+            </div>
+            <div class="form-item">
+                <label>班级名称</label>
+                <input class="form-input" name="cls" required>
+            </div>
+            <div style="text-align:right;margin-top:20px;">
+                <button type="button" class="btn btn-gray" onclick="closeModal('addStudentModal')">取消</button>
+                <button type="submit" class="btn btn-pink">提交</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+let currentPage = 1;
+const pageSize = 10;
+// 加载列表
+async function loadList(page) {
+    currentPage = page;
+    const key = $('#searchKey').value.trim();
+    const res = await request(`/api/admin/student/list?page=${page}&page_size=${pageSize}&keyword=${key}`);
+    const tbody = $('#studentTable tbody');
+    tbody.innerHTML = '';
+    res.data.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${item.id}</td>
+            <td>${item.student_name}</td>
+            <td>${item.class_name}</td>
+            <td>${item.parent_watch_switch === 1 ? '<span style="color:green">已开启</span>' : '<span style="color:red">已关闭</span>'}</td>
+            <td>${item.create_time}</td>
+            <td class="btn-group">
+                <button class="btn btn-green" onclick="switchWatch(${item.id}, ${item.parent_watch_switch === 1 ? 0 : 1})">家长远程观看权限</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    })
+    renderPagination(res.total, page, pageSize, loadList);
+}
+// 切换观看权限
+async function switchWatch(sid, status) {
+    const res = await request(`/api/admin/student/switch?student_id=${sid}&status=${status}`, 'POST');
+    msg("操作成功");
+    loadList(currentPage);
+}
+
+// 新增幼儿提交
+$('#addStuForm').onsubmit = async e => {
+    e.preventDefault();
+    const name = e.target.name.value.trim();
+    const cls = e.target.cls.value.trim();
+    // 拼查询参数，传给url
+    const url = `/api/admin/student/add?name=${encodeURIComponent(name)}&cls=${encodeURIComponent(cls)}`
+    const res = await fetch(url, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Cookie": document.cookie
+        }
+    });
+    const data = await res.json();
+    if (data.code === 0) {
+        msg("添加成功");
+        closeModal('addStudentModal');
+        loadList(1);
+        e.target.reset();
+    } else {
+        msg(data.msg || "添加失败");
+    }
+}
+
+
+
+window.onload = () => loadList(1);
+</script>
+{% endblock %}

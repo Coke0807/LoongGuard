@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="layout-wrap">
+    <div class="sidebar">
+        <div class="sidebar-logo">
+            <h3><i class="fa-solid fa-child-reaching"></i>幼儿园 AI 安全卫士后端管理系统</h3>
+        </div>
+        <ul class="sidebar-menu">
+            <li><a href="/admin/index"><i class="fa-solid fa-house"></i> 首页仪表盘</a></li>
+            <li><a href="/admin/student"><i class="fa-solid fa-child"></i> 幼儿管理</a></li>
+            <li><a href="/admin/class"><i class="fa-solid fa-chalkboard-user"></i> 班级管理</a></li>
+            <li><a href="/admin/parent"><i class="fa-solid fa-users"></i> 家长管理</a></li>
+            <li><a href="/admin/import"><i class="fa-solid fa-file-import"></i> 批量导入</a></li>
+            <li><a href="/admin/growth"><i class="fa-solid fa-camera"></i> 成长记录</a></li>
+            <li><a href="/admin/notice"><i class="fa-solid fa-bullhorn"></i> 公告管理</a></li>
+            <li><a href="/admin/account"><i class="fa-solid fa-user-shield"></i> 管理员账号</a></li>
+            <li><a href="/admin/logout"><i class="fa-solid fa-right-from-bracket"></i> 退出登录</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <h2 class="page-title"><i class="fa-solid fa-file-import"></i> 批量数据导入</h2>
+        <div class="card">
+            <p>下载模板，按格式填写数据（学生、家长、班级关联）</p>
+            <a href="/admin/template/data_import"><button class="btn btn-green" style="margin:10px 0;">下载数据导入模板</button></a>
+            <div class="upload-box">
+                <input type="file" id="dataFile" accept=".xlsx,.xls">
+                <p style="margin-top:10px;">选择Excel文件上传导入</p>
+            </div>
+            <button class="btn btn-pink" onclick="uploadData()">开始导入</button>
+            <div id="importResult" style="margin-top:15px;white-space:pre-wrap;"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function uploadData() {
+    const fileInput = document.getElementById('dataFile');
+    if (!fileInput.files || fileInput.files.length === 0) {
+        msg("请选择文件");
+        return;
+    }
+    const file = fileInput.files[0];
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+        const resp = await fetch('/api/admin/data/import', { method: 'POST', body: formData });
+        const data = await resp.json();
+        let resultMsg = data.msg;
+        if (data.errors && data.errors.length > 0) {
+            resultMsg += "\n失败详情:\n" + data.errors.join("\n");
+        }
+        document.getElementById('importResult').innerText = resultMsg;
+        msg(data.msg);
+    } catch (e) {
+        msg('请求失败: ' + e.message);
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="layout-wrap">
+    <!-- 侧边栏 -->
+    <div class="sidebar">
+        <div class="sidebar-logo">
+            <h3><i class="fa-solid fa-child-reaching"></i>幼儿园 AI 安全卫士后端管理系统</h3>
+        </div>
+        <ul class="sidebar-menu">
+            <li><a href="/admin/index" class="active"><i class="fa-solid fa-house"></i> 首页仪表盘</a></li>
+            <li><a href="/admin/student"><i class="fa-solid fa-child"></i> 幼儿管理</a></li>
+            <li><a href="/admin/class"><i class="fa-solid fa-chalkboard-user"></i> 班级管理</a></li>
+            <li><a href="/admin/parent"><i class="fa-solid fa-users"></i> 家长管理</a></li>
+            <li><a href="/admin/import"><i class="fa-solid fa-file-import"></i> 批量导入</a></li>
+            <li><a href="/admin/growth"><i class="fa-solid fa-camera"></i> 成长记录</a></li>
+            <li><a href="/admin/notice"><i class="fa-solid fa-bullhorn"></i> 公告管理</a></li>
+            <li><a href="/admin/account"><i class="fa-solid fa-user-shield"></i> 管理员账号</a></li>
+            <li><a href="/admin/logout"><i class="fa-solid fa-right-from-bracket"></i> 退出登录</a></li>
+        </ul>
+    </div>
+    <!-- 主内容 -->
+    <div class="main-content">
+        <h2 class="page-title"><i class="fa-solid fa-chart-line"></i> 数据总览</h2>
+        <div class="stat-row">
+            <div class="stat-card stat-pink">
+                <div>幼儿总数</div>
+                <div class="num" id="studentTotal">0</div>
+            </div>
+            <div class="stat-card stat-green">
+                <div>家长总数</div>
+                <div class="num" id="parentTotal">0</div>
+            </div>
+            <div class="stat-card stat-pink">
+                <div>开放观看班级</div>
+                <div class="num" id="openWatchCount">0</div>
+            </div>
+            <div class="stat-card stat-green">
+                <div>管理员账号</div>
+                <div class="num" id="adminTotal">0</div>
+            </div>
+        </div>
+        <div class="card">
+            <h4>快捷操作</h4>
+            <div style="margin-top:16px;display:flex;gap:12px;">
+                <a href="/admin/student"><button class="btn btn-pink">幼儿管理</button></a>
+                <a href="/admin/class"><button class="btn btn-primary">班级管理</button></a>
+                <a href="/admin/parent"><button class="btn btn-green">家长管理</button></a>
+                <a href="/admin/import"><button class="btn btn-pink">批量导入数据</button></a>
+                <a href="/admin/growth"><button class="btn btn-green">成长记录</button></a>
+                <a href="/admin/notice"><button class="btn btn-primary">公告管理</button></a>
+                <a href="/admin/account"><button class="btn btn-gray">管理员账号管理</button></a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// 加载统计数据
+(async () => {
+    const st = await request("/api/admin/student/list?page=1&page_size=9999");
+    const pt = await request("/api/admin/parent/list?page=1&page_size=9999");
+    const ad = await request("/api/admin/admin/list?page=1&page_size=9999");
+    let openCnt = 0;
+    st.data.forEach(item => {
+        if(item.parent_watch_switch === 1) openCnt++;
+    })
+    document.getElementById('studentTotal').innerText = st.total;
+    document.getElementById('parentTotal').innerText = pt.total;
+    document.getElementById('adminTotal').innerText = ad.total;
+    document.getElementById('openWatchCount').innerText = openCnt;
+})()
+</script>
+{% endblock %}

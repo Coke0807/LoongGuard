@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 from aiohttp import web
@@ -38,6 +38,11 @@ from config import APIConfig
 from loongguard.api.metrics import RATE_LIMITED
 from loongguard.db.database import AlertDatabase
 from loongguard.utils.schema import AlertLog, BoundingBox
+
+# 类型检查时导入，避免循环导入
+if TYPE_CHECKING:
+    from loongguard.api.parent_routes import ParentAPIRoutes
+    from loongguard.media.hls_publisher import HLSPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +53,13 @@ _UPLOAD_DIR = Path(__file__).parent.parent.parent / "data" / "uploads"
 _MAX_UPLOAD_SIZE = 500 * 1024 * 1024
 # 支持的视频格式
 _ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm"}
+
+# SSE 队列大小限制（每个客户端独立队列）
+_SSE_QUEUE_MAXSIZE = 256
+
+# JPEG 编码质量
+_JPEG_QUALITY = 60
+_WEB_JPEG_QUALITY = 50
 
 
 # ── 模块接口协议（结构化鸭子类型约束）─────────────────────────
@@ -206,7 +218,7 @@ class VideoHub:
             # 编码耗时 ~20-40ms/帧，是帧率瓶颈之一。改为单次编码后本地和 Web
             # 端共用同一帧数据，省掉 ~50% 编码开销。
             ret, buf = cv2.imencode(
-                ".jpg", display, [cv2.IMWRITE_JPEG_QUALITY, 60],
+                ".jpg", display, [cv2.IMWRITE_JPEG_QUALITY, _JPEG_QUALITY],
             )
             if ret:
                 jpeg_bytes = buf.tobytes()
@@ -255,7 +267,7 @@ class VideoHub:
                      _cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 1)
         _cv2.putText(fb, "Check OpenCV imgcodecs build", (20, fb.shape[0] // 2 + 20),
                      _cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-        _ret, _buf = _cv2.imencode(".jpg", fb, [_cv2.IMWRITE_JPEG_QUALITY, 50])
+        _ret, _buf = _cv2.imencode(".jpg", fb, [_cv2.IMWRITE_JPEG_QUALITY, _WEB_JPEG_QUALITY])
         if _ret:
             return _buf.tobytes()
         # 极端情况：连纯色帧都无法编码，返回硬编码的最小 JPEG
@@ -356,6 +368,8 @@ class AnalysisTask:
     error_message: str = ""
     # 视频元信息（用于 SSE 重连时补发 meta 事件）
     video_meta: dict | None = field(default=None, repr=False)
+    # 事件循环引用（create_task 时捕获），供工作线程跨线程唤醒 SSE 等待者
+    loop: asyncio.AbstractEventLoop | None = field(default=None, repr=False)
     # SSE 事件队列（每个连接的客户端独立队列）
     _sse_queues: list = field(default_factory=list, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -372,10 +386,21 @@ class AnalysisTask:
                     dead_queues.append(q)
             for q in dead_queues:
                 self._sse_queues.remove(q)
+        # 跨线程唤醒事件循环：本方法运行于视频分析工作线程，而 asyncio.Queue
+        # 并非线程安全——put_nowait 内部的 waiter.set_result 走的是 loop.call_soon，
+        # 不会写 self-pipe，事件循环可能阻塞在 selector 上迟迟取不到事件
+        #（表现为 SSE 流最长停顿 ~30s）。call_soon_threadsafe 强制写 self-pipe
+        # 立即唤醒循环，属于官方指定的线程间调度入口。
+        loop = self.loop
+        if loop is not None:
+            try:
+                loop.call_soon_threadsafe(lambda: None)
+            except RuntimeError:
+                pass  # 事件循环已关闭（服务停止中），无需唤醒
 
     def register_sse(self) -> asyncio.Queue:
         """注册一个 SSE 客户端队列"""
-        q: asyncio.Queue = asyncio.Queue(maxsize=256)
+        q: asyncio.Queue = asyncio.Queue(maxsize=_SSE_QUEUE_MAXSIZE)
         with self._lock:
             self._sse_queues.append(q)
         return q
@@ -460,6 +485,7 @@ class VideoAnalyzer:
             task_id=task_id,
             filename=filename,
             file_path=file_path,
+            loop=asyncio.get_running_loop(),
         )
         self._tasks[task_id] = task
         return task
@@ -608,7 +634,7 @@ class VideoAnalyzer:
                     )
 
                 _, jpeg_buf = cv2.imencode(
-                    ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 60],
+                    ".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, _JPEG_QUALITY],
                 )
                 task.current_frame_jpeg = jpeg_buf.tobytes()
 
@@ -711,13 +737,18 @@ class AlertAPIServer:
 
     def __init__(self, config: APIConfig) -> None:
         self._config = config
-        self._app: Any = None
-        self._ws_clients: list[Any] = []
+        self._app: web.Application | None = None
+        self._ws_clients: list[web.WebSocketResponse] = []
         self._alert_history: deque[AlertLog] = deque(maxlen=self._MAX_ALERT_HISTORY)
-        self._runner: Any = None
+        self._runner: web.AppRunner | None = None
         self.video_hub = VideoHub()
         self.video_analyzer = VideoAnalyzer()
         self._db: AlertDatabase | None = None
+        # 家长端路由（start() 时构造并注册）
+        self._parent_routes: ParentAPIRoutes | None = None
+        # HLS 直播发布器（家长端远程观看，pipeline.start() 时注入；
+        # None 或 enabled=False 时对应端点返回 404）
+        self._hls_publisher: HLSPublisher | None = None
         # 认证凭据（在 .env 加载后构造，因此此处读取是安全的）
         # 设计动机：旧实现模块导入时读取 os.environ，导致 .env 未注入时
         # 凭据为空、认证静默失效。改为实例级读取，保证拿到真实配置。
@@ -749,6 +780,9 @@ class AlertAPIServer:
 
         # 路由注册
         self._app.router.add_get("/stream", self._handle_stream)
+        # HLS 直播（家长端远程观看；静态路由须注册在 /stream/{segment} 之前）
+        self._app.router.add_get("/stream/live.m3u8", self._handle_hls_playlist)
+        self._app.router.add_get("/stream/{segment}", self._handle_hls_segment)
         self._app.router.add_get(self._config.status_path, self._handle_status)
         self._app.router.add_get("/api/v1/stats", self._handle_stats)
         self._app.router.add_get(self._config.alerts_path, self._handle_alerts)
@@ -784,6 +818,13 @@ class AlertAPIServer:
 
         # 审计日志查询端点（合规：查看敏感接口访问记录）
         self._app.router.add_get("/api/v1/audit", self._handle_audit)
+
+        # 家长端路由（微信小程序 + 管理后台，自带 JWT 鉴权，
+        # 由中间件按路径前缀豁免 Basic Auth）
+        from loongguard.api.parent_routes import ParentAPIRoutes
+
+        self._parent_routes = ParentAPIRoutes()
+        self._parent_routes.register(self._app)
 
         runner = web.AppRunner(self._app)
         await runner.setup()
@@ -821,7 +862,7 @@ class AlertAPIServer:
         self._alert_history.append(alert)
         payload = json.dumps(alert.to_dict(), ensure_ascii=False)
 
-        disconnected: list[Any] = []
+        disconnected: list[web.WebSocketResponse] = []
         for ws in self._ws_clients:
             try:
                 await ws.send_str(payload)
@@ -833,7 +874,7 @@ class AlertAPIServer:
 
     # ── HTTP handlers ─────────────────────────────────────────
 
-    async def _handle_stream(self, request: Any) -> Any:
+    async def _handle_stream(self, request: web.Request) -> web.StreamResponse:
         """
         MJPEG 实时视频流
 
@@ -864,30 +905,34 @@ class AlertAPIServer:
             while True:
                 t0 = time.monotonic()
 
-                # 帧跳过：如果 VideoHub 已经更新到新帧，直接发最新帧
                 current_count = self.video_hub._frame_count
-                if current_count == last_sent_count:
-                    # 无新帧，短暂等待
-                    await _async_sleep(0.01)
-                    continue
-
                 jpeg = self.video_hub.get_web_jpeg()
                 if jpeg is None:
                     await _send_placeholder(response)
-                else:
-                    try:
-                        await asyncio.wait_for(
-                            response.write(
-                                b"--frame\r\n"
-                                b"Content-Type: image/jpeg\r\n\r\n"
-                                + jpeg
-                                + b"\r\n",
-                            ),
-                            timeout=2.0,
-                        )
-                        last_sent_count = current_count
-                    except (TimeoutError, ConnectionResetError):
-                        break
+                    await _async_sleep(0.5)
+                    continue
+
+                if current_count == last_sent_count:
+                    # 无新帧（摄像头暂时停流/文件源播完）：短暂退避后重发
+                    # 最新帧而非空转——浏览器画面不变，而以本流为输入的
+                    # ffmpeg/HLS 等消费方不会因长期无数据卡死在探测阶段。
+                    await _async_sleep(0.5)
+                    jpeg = self.video_hub.get_web_jpeg()
+                    current_count = self.video_hub._frame_count
+
+                try:
+                    await asyncio.wait_for(
+                        response.write(
+                            b"--frame\r\n"
+                            b"Content-Type: image/jpeg\r\n\r\n"
+                            + jpeg
+                            + b"\r\n",
+                        ),
+                        timeout=2.0,
+                    )
+                    last_sent_count = current_count
+                except (TimeoutError, ConnectionResetError):
+                    break
 
                 # 自适应间隔：保证总间隔不低于 40ms，但不叠加传输耗时
                 elapsed = time.monotonic() - t0
@@ -900,7 +945,7 @@ class AlertAPIServer:
 
         return response
 
-    async def _handle_status(self, request: Any) -> Any:
+    async def _handle_status(self, request: web.Request) -> web.Response:
         """设备状态接口"""
 
         return web.json_response({
@@ -909,14 +954,14 @@ class AlertAPIServer:
             "total_alerts": len(self._alert_history),
         })
 
-    async def _handle_stats(self, request: Any) -> Any:
+    async def _handle_stats(self, request: web.Request) -> web.Response:
         """实时统计接口"""
 
         stats = self.video_hub.get_stats()
         stats["total_alerts_history"] = len(self._alert_history)
         return web.json_response(stats)
 
-    async def _handle_alerts(self, request: Any) -> Any:
+    async def _handle_alerts(self, request: web.Request) -> web.Response:
         """告警历史查询接口（支持分页、过滤、时间范围）"""
 
         try:
@@ -973,7 +1018,7 @@ class AlertAPIServer:
             "data": page_data,
         })
 
-    async def _handle_ack(self, request: Any) -> Any:
+    async def _handle_ack(self, request: web.Request) -> web.Response:
         """确认/消警接口"""
 
         alert_id = request.match_info["alert_id"]
@@ -999,7 +1044,7 @@ class AlertAPIServer:
 
         return web.json_response({"error": "not found"}, status=404)
 
-    async def _handle_ack_all(self, request: Any) -> Any:
+    async def _handle_ack_all(self, request: web.Request) -> web.Response:
         """批量确认所有未确认的告警"""
 
         acked = 0
@@ -1022,7 +1067,7 @@ class AlertAPIServer:
 
         return web.json_response({"ok": True, "acked": acked})
 
-    async def _handle_ws(self, request: Any) -> Any:
+    async def _handle_ws(self, request: web.Request) -> web.StreamResponse:
         """WebSocket 告警推送端点"""
 
         ws = web.WebSocketResponse()
@@ -1040,9 +1085,71 @@ class AlertAPIServer:
         logger.info("WebSocket client disconnected")
         return ws
 
+    # ── HLS 直播（家长端远程观看，token 保护）────────────────
+
+    def set_hls_publisher(self, publisher: HLSPublisher) -> None:
+        """注入 HLS 发布器（pipeline.start() 时构造；None 表示未启用）"""
+        self._hls_publisher = publisher
+
+    async def _handle_hls_playlist(self, request: web.Request) -> web.Response:
+        """
+        HLS 播放列表（/stream/live.m3u8?token=...）
+
+        鉴权：带过期 HMAC token（家长端经 /api/wx/stream/url 获取）。
+        空闲停机后的首个请求会重新拉起 ffmpeg，并短暂等待首个分片产出。
+        """
+        pub = self._hls_publisher
+        if pub is None or not getattr(pub, "enabled", False):
+            return web.json_response(
+                {"error": "HLS 直播未启用（ffmpeg 缺失或未配置）"}, status=404)
+        if not pub.verify_token(request.query.get("token", "")):
+            return web.json_response(
+                {"error": "无效或已过期的观看凭证"}, status=401)
+
+        pub.ensure_started()
+
+        playlist_text = pub.read_playlist()
+        if playlist_text is None:
+            # 首次启动 ffmpeg 需要完成输入探测并产出首个分片（约 5~15s），
+            # 轮询等待；超时则让播放器稍后重试（小程序端有刷新入口）
+            deadline = time.monotonic() + 20.0
+            while playlist_text is None and time.monotonic() < deadline:
+                await asyncio.sleep(0.5)
+                playlist_text = pub.read_playlist()
+        if playlist_text is None:
+            return web.json_response(
+                {"error": "直播流尚未就绪，请稍后重试"}, status=503)
+
+        pub.touch()
+        return web.Response(
+            text=playlist_text,
+            content_type="application/vnd.apple.mpegurl",
+            headers={"Cache-Control": "no-cache, no-store"},
+        )
+
+    async def _handle_hls_segment(self, request: web.Request) -> web.Response:
+        """HLS TS 分片（/stream/live_XXXX.ts?token=...），同样要求 token"""
+        pub = self._hls_publisher
+        if pub is None or not getattr(pub, "enabled", False):
+            return web.json_response({"error": "HLS 直播未启用"}, status=404)
+        if not pub.verify_token(request.query.get("token", "")):
+            return web.json_response(
+                {"error": "无效或已过期的观看凭证"}, status=401)
+
+        seg_bytes = pub.read_segment(request.match_info["segment"])
+        if seg_bytes is None:
+            return web.json_response({"error": "分片不存在或已过期"}, status=404)
+
+        pub.touch()
+        return web.Response(
+            body=seg_bytes,
+            content_type="video/mp2t",
+            headers={"Cache-Control": "no-cache"},
+        )
+
     # ── 视频上传 & 分析 handlers ─────────────────────────────
 
-    async def _handle_upload(self, request: Any) -> Any:
+    async def _handle_upload(self, request: web.Request) -> web.Response:
         """
         视频文件上传接口
 
@@ -1106,7 +1213,7 @@ class AlertAPIServer:
             "message": "上传成功，请调用 /api/v1/analyze/{task_id} 开始分析",
         })
 
-    async def _handle_analyze(self, request: Any) -> Any:
+    async def _handle_analyze(self, request: web.Request) -> web.Response:
         """触发视频分析任务"""
 
         task_id = request.match_info["task_id"]
@@ -1129,7 +1236,7 @@ class AlertAPIServer:
             "message": "分析已启动",
         })
 
-    async def _handle_analyze_status(self, request: Any) -> Any:
+    async def _handle_analyze_status(self, request: web.Request) -> web.Response:
         """查询分析任务状态"""
 
         task_id = request.match_info["task_id"]
@@ -1139,7 +1246,7 @@ class AlertAPIServer:
 
         return web.json_response(task.to_status_dict())
 
-    async def _handle_analyze_stream(self, request: Any) -> Any:
+    async def _handle_analyze_stream(self, request: web.Request) -> web.StreamResponse:
         """
         SSE 实时分析结果流
 
@@ -1195,7 +1302,7 @@ class AlertAPIServer:
 
         return response
 
-    async def _handle_analyze_frame(self, request: Any) -> Any:
+    async def _handle_analyze_frame(self, request: web.Request) -> web.Response:
         """获取当前分析帧的标注图片"""
 
         task_id = request.match_info["task_id"]
@@ -1212,7 +1319,7 @@ class AlertAPIServer:
             headers={"Cache-Control": "no-cache"},
         )
 
-    async def _handle_metrics(self, request: Any) -> Any:
+    async def _handle_metrics(self, request: web.Request) -> web.Response:
         """Prometheus 指标端点"""
 
         from loongguard.api.metrics import get_metrics_bytes, get_metrics_content_type
@@ -1227,7 +1334,7 @@ class AlertAPIServer:
         resp.headers["Content-Type"] = get_metrics_content_type()
         return resp
 
-    async def _handle_health_pose(self, request: Any) -> Any:
+    async def _handle_health_pose(self, request: web.Request) -> web.Response:
         """
         MoveNet 姿态模型健康检查端点
 
@@ -1257,7 +1364,7 @@ class AlertAPIServer:
         status = 200 if snapshot.get("available") else 503
         return web.json_response(snapshot, status=status)
 
-    async def _handle_health_detection(self, request: Any) -> Any:
+    async def _handle_health_detection(self, request: web.Request) -> web.Response:
         """
         YOLO26 检测模型健康检查端点
 
@@ -1281,7 +1388,7 @@ class AlertAPIServer:
         status = 200 if snapshot.get("available") else 503
         return web.json_response(snapshot, status=status)
 
-    async def _handle_health_face(self, request: Any) -> Any:
+    async def _handle_health_face(self, request: web.Request) -> web.Response:
         """
         人脸检测模型健康检查端点
 
@@ -1305,7 +1412,7 @@ class AlertAPIServer:
         status = 200 if snapshot.get("available") else 503
         return web.json_response(snapshot, status=status)
 
-    async def _handle_health(self, request: Any) -> Any:
+    async def _handle_health(self, request: web.Request) -> web.Response:
         """
         总体健康检查
 
@@ -1361,7 +1468,7 @@ class AlertAPIServer:
 
     # ── 认证与审计（供中间件调用）─────────────────────────
 
-    def auth_ok(self, request: Any) -> bool:
+    def auth_ok(self, request: web.Request) -> bool:
         """
         Basic Auth 校验。
 
@@ -1384,7 +1491,7 @@ class AlertAPIServer:
             passwd, self._auth_pass
         )
 
-    def enqueue_audit(self, request: Any) -> None:
+    def enqueue_audit(self, request: web.Request) -> None:
         """
         异步记录敏感接口访问审计（不阻塞请求）。
 
@@ -1401,7 +1508,7 @@ class AlertAPIServer:
         }
         asyncio.create_task(asyncio.to_thread(self._db.insert_audit, entry))
 
-    async def _handle_audit(self, request: Any) -> Any:
+    async def _handle_audit(self, request: web.Request) -> web.Response:
         """审计日志查询（分页），用于合规审查"""
 
         if self._db is None:
@@ -1457,7 +1564,7 @@ async def _async_sleep(seconds: float) -> None:
     await asyncio.sleep(seconds)
 
 
-async def _send_placeholder(response: Any) -> None:
+async def _send_placeholder(response: web.StreamResponse) -> None:
     """发送 1x1 黑色占位 JPEG（无帧数据时）"""
     # 最小合法 JPEG: 1x1 黑色像素
     placeholder = (
@@ -1484,14 +1591,41 @@ async def _send_placeholder(response: Any) -> None:
 # 需要审计记录的高敏感路径（涉及未成年人隐私）
 _AUDIT_PATHS = {
     "/stream",
+    "/stream/live.m3u8",
     "/ws/alerts",
     "/api/v1/alerts",
     "/api/v1/stats",
     "/api/v1/status",
 }
 
+# 家长端路由前缀（微信小程序 /api/wx/*、管理后台 /api/admin/* 与 /admin 页面、
+# 静态资源与上传文件）。这些路径自带独立 JWT 鉴权（parent_routes.py），
+# 豁免主仓库 Basic Auth，否则小程序与浏览器后台无法携带 Basic 凭据访问。
+_PARENT_PATH_PREFIXES = (
+    "/api/wx/",
+    "/api/admin/",
+    "/static/",
+    "/uploads/",
+)
 
-def _make_server_middleware(server: AlertAPIServer) -> Any:
+
+def _is_parent_path(path: str) -> bool:
+    """
+    判断请求路径是否属于家长端（豁免 Basic Auth，限流与审计不受影响）。
+
+    - /admin 采用"精确匹配 + /admin/ 子路径"两种形态，避免 /administrator
+      等无关路径被误豁免主仓库 Basic Auth。
+    - /stream/<子路径> 为 HLS 直播（mjpeg 的 /stream 无尾斜杠、不受影响），
+      由带过期 HMAC token 自行鉴权（parent_routes 签发），故豁免 Basic Auth。
+    """
+    if path.startswith(_PARENT_PATH_PREFIXES):
+        return True
+    if path == "/stream/live.m3u8" or path.startswith("/stream/"):
+        return True
+    return path == "/admin" or path.startswith("/admin/")
+
+
+def _make_server_middleware(server: AlertAPIServer) -> web.middleware:
     """
     生成后端中间件（限流 + 认证 + 访问审计）闭包工厂。
 
@@ -1506,7 +1640,7 @@ def _make_server_middleware(server: AlertAPIServer) -> Any:
     """
 
     @web.middleware
-    async def _middleware(request: web.Request, handler: Any) -> web.StreamResponse:
+    async def _middleware(request: web.Request, handler: web.RequestHandler) -> web.StreamResponse:
         # 限流：每客户端 IP 令牌桶（/metrics 豁免）
         limiter = server._rate_limiter
         if limiter.enabled and request.path != "/metrics":
@@ -1522,8 +1656,13 @@ def _make_server_middleware(server: AlertAPIServer) -> Any:
         if request.path in _AUDIT_PATHS:
             server.enqueue_audit(request)
 
-        # 认证：/metrics 放行（Prometheus 抓取），其余按配置校验
-        if request.path != "/metrics" and not server.auth_ok(request):
+        # 认证：/metrics 放行（Prometheus 抓取），家长端路径自带 JWT 鉴权放行，
+        # 其余按配置校验
+        if (
+            request.path != "/metrics"
+            and not _is_parent_path(request.path)
+            and not server.auth_ok(request)
+        ):
             raise web.HTTPUnauthorized(
                 headers={"WWW-Authenticate": 'Basic realm="LoongGuard"'},
             )

@@ -14,19 +14,26 @@
 
 $ErrorActionPreference = "Stop"
 
-# 切换工作目录到脚本所在目录（backend/）
-$backendDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+# 切换工作目录到 backend/（脚本位于 backend/deploy/，需上溯一级）
+$backendDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $backendDir
 
 # ── 1. 加载 .env（若缺失 SM4 密钥，config 校验会在启动时拦截并报错）──
+# 值解析规则与 backend/config/settings.py 一致：引号包裹的值原样保留；
+# 未引号时仅 "空白+#" 视为行内注释，紧跟值的 #（如 abc#def）属于值本身。
 if (Test-Path ".env") {
     Get-Content ".env" | ForEach-Object {
         $line = $_.Trim()
         if ($line -and -not $line.StartsWith("#") -and $line.Contains("=")) {
             $key, $value = $line -split "=", 2
             $key = $key.Trim()
-            # 去掉行内注释（# 之后），保留值内 # 前内容
-            $value = ($value -split "#")[0].Trim()
+            $value = $value.Trim()
+            if ($value.Length -ge 2 -and ($value[0] -eq '"' -or $value[0] -eq "'") -and $value[-1] -eq $value[0]) {
+                $value = $value.Substring(1, $value.Length - 2)
+            } else {
+                $idx = $value.IndexOf(" #")
+                if ($idx -ge 0) { $value = $value.Substring(0, $idx).TrimEnd() }
+            }
             if ($key -and -not [Environment]::GetEnvironmentVariable($key)) {
                 [Environment]::SetEnvironmentVariable($key, $value, "Process")
             }

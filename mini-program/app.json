@@ -1,0 +1,42 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/bindPhone/bindPhone",
+    "pages/notices/notices",
+    "pages/growth/growth",
+    "pages/monitor/monitor"
+  ],
+  "window": {
+    "backgroundTextStyle": "dark",
+    "navigationBarBackgroundColor": "#F5F8FC",
+    "navigationBarTitleText": "幼儿园AI安全卫士",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#F5F8FC"
+  },
+  "tabBar": {
+    "custom": true,
+    "color": "#9ca3af",
+    "selectedColor": "#4A90D9",
+    "backgroundColor": "#ffffff",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "text": "我的幼儿"
+      },
+      {
+        "pagePath": "pages/notices/notices",
+        "text": "通知公告"
+      },
+      {
+        "pagePath": "pages/growth/growth",
+        "text": "成长记录"
+      },
+      {
+        "pagePath": "pages/monitor/monitor",
+        "text": "实时监控"
+      }
+    ]
+  },
+  "sitemapLocation": "sitemap.json",
+  "style": "v2"
+}

@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="layout-wrap">
+    <div class="sidebar">
+        <div class="sidebar-logo">
+            <h3><i class="fa-solid fa-child-reaching"></i>幼儿园 AI 安全卫士后端管理系统</h3>
+        </div>
+        <ul class="sidebar-menu">
+            <li><a href="/admin/index"><i class="fa-solid fa-house"></i> 首页仪表盘</a></li>
+            <li><a href="/admin/student"><i class="fa-solid fa-child"></i> 幼儿管理</a></li>
+            <li><a href="/admin/class"><i class="fa-solid fa-chalkboard-user"></i> 班级管理</a></li>
+            <li><a href="/admin/parent"><i class="fa-solid fa-users"></i> 家长管理</a></li>
+            <li><a href="/admin/import"><i class="fa-solid fa-file-import"></i> 批量导入</a></li>
+            <li><a href="/admin/growth"><i class="fa-solid fa-camera"></i> 成长记录</a></li>
+            <li><a href="/admin/notice" class="active"><i class="fa-solid fa-bullhorn"></i> 公告管理</a></li>
+            <li><a href="/admin/account"><i class="fa-solid fa-user-shield"></i> 管理员账号</a></li>
+            <li><a href="/admin/logout"><i class="fa-solid fa-right-from-bracket"></i> 退出登录</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <h2 class="page-title"><i class="fa-solid fa-bullhorn"></i> 公告信息管理</h2>
+            <button class="btn btn-pink" onclick="openAddModal()">新增公告</button>
+        </div>
+        <div class="card">
+            <div style="display:flex;gap:10px;margin-bottom:15px;">
+                <input class="form-input" id="searchKey" placeholder="搜索公告标题" style="width:300px;">
+                <button class="btn btn-pink" onclick="loadList(1)">搜索</button>
+            </div>
+            <div class="table-wrap">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>标题</th>
+                            <th>类型</th>
+                            <th>摘要</th>
+                            <th>发布时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="noticeTbody"></tbody>
+                </table>
+            </div>
+            <div class="pagination" id="pageBox"></div>
+        </div>
+    </div>
+</div>
+
+<!-- 新增弹窗 -->
+<div class="modal-mask" id="addModal">
+    <div class="modal-box">
+        <div class="modal-head">
+            <span>新增公告</span>
+            <span class="modal-close">&times;</span>
+        </div>
+        <div class="form-item">
+            <label>公告标题</label>
+            <input class="form-input" id="addTitle" required>
+        </div>
+        <div class="form-item">
+            <label>公告类型</label>
+            <select class="form-input" id="addType">
+                <option value="important">重要</option>
+                <option value="safe">安全</option>
+                <option value="activity">活动</option>
+                <option value="health">健康</option>
+                <option value="notice" selected>通知</option>
+            </select>
+        </div>
+        <div class="form-item">
+            <label>摘要（选填，不填则自动截取正文）</label>
+            <input class="form-input" id="addSummary" placeholder="简要概括公告内容">
+        </div>
+        <div class="form-item">
+            <label>公告正文</label>
+            <textarea class="form-input" id="addContent" rows="6" style="resize:vertical;" required></textarea>
+        </div>
+        <div style="text-align:right;margin-top:20px;">
+            <button class="btn btn-gray" onclick="closeModal('addModal')">取消</button>
+            <button class="btn btn-pink" onclick="doAdd()">提交</button>
+        </div>
+    </div>
+</div>
+
+<!-- 编辑弹窗 -->
+<div class="modal-mask" id="editModal">
+    <div class="modal-box">
+        <div class="modal-head">
+            <span>编辑公告</span>
+            <span class="modal-close">&times;</span>
+        </div>
+        <input type="hidden" id="editId">
+        <div class="form-item">
+            <label>公告标题</label>
+            <input class="form-input" id="editTitle" required>
+        </div>
+        <div class="form-item">
+            <label>公告类型</label>
+            <select class="form-input" id="editType">
+                <option value="important">重要</option>
+                <option value="safe">安全</option>
+                <option value="activity">活动</option>
+                <option value="health">健康</option>
+                <option value="notice">通知</option>
+            </select>
+        </div>
+        <div class="form-item">
+            <label>摘要（选填，不填则自动截取正文）</label>
+            <input class="form-input" id="editSummary">
+        </div>
+        <div class="form-item">
+            <label>公告正文</label>
+            <textarea class="form-input" id="editContent" rows="6" style="resize:vertical;" required></textarea>
+        </div>
+        <div style="text-align:right;margin-top:20px;">
+            <button class="btn btn-gray" onclick="closeModal('editModal')">取消</button>
+            <button class="btn btn-pink" onclick="doEdit()">保存</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const TYPE_MAP = {
+    "important": {"text": "重要", "cls": "tag-red"},
+    "safe":      {"text": "安全", "cls": "tag-orange"},
+    "activity":  {"text": "活动", "cls": "tag-blue"},
+    "health":    {"text": "健康", "cls": "tag-green"},
+    "notice":    {"text": "通知", "cls": "tag-gray"}
+};
+
+let currentPage = 1;
+const pageSize = 10;
+
+async function loadList(page) {
+    currentPage = page;
+    const keyword = document.getElementById('searchKey').value.trim();
+    const res = await request(`/api/admin/notice/list?page=${page}&page_size=${pageSize}&keyword=${keyword}`);
+    const tbody = document.getElementById('noticeTbody');
+    tbody.innerHTML = '';
+    res.data.forEach(item => {
+        const t = TYPE_MAP[item.notice_type] || TYPE_MAP["notice"];
+        const summary = item.summary || (item.content ? item.content.substring(0, 40) + '...' : '-');
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${item.id}</td>
+            <td>${item.title}</td>
+            <td><span class="tag ${t.cls}">${t.text}</span></td>
+            <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${summary}</td>
+            <td>${String(item.publish_time).substring(0, 16)}</td>
+            <td>
+                <button class="btn btn-sm btn-warning" onclick='openEdit(${JSON.stringify(item).replace(/'/g, "&#39;")})'>编辑</button>
+                <button class="btn btn-sm btn-danger" onclick="doDelete(${item.id})">删除</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+    renderPagination(res.total, page, pageSize, loadList);
+}
+
+function openAddModal() {
+    document.getElementById('addTitle').value = '';
+    document.getElementById('addType').value = 'notice';
+    document.getElementById('addSummary').value = '';
+    document.getElementById('addContent').value = '';
+    openModal('addModal');
+}
+
+async function doAdd() {
+    const title = document.getElementById('addTitle').value.trim();
+    const content = document.getElementById('addContent').value;
+    const summary = document.getElementById('addSummary').value.trim();
+    const notice_type = document.getElementById('addType').value;
+    if (!title || !content) { msg('请填写标题和正文'); return; }
+    const url = `/api/admin/notice/add?title=${encodeURIComponent(title)}&content=${encodeURIComponent(content)}&summary=${encodeURIComponent(summary)}&notice_type=${notice_type}`;
+    const res = await request(url, 'POST');
+    if (res.code === 0) {
+        msg('添加成功');
+        closeModal('addModal');
+        loadList(1);
+    } else {
+        msg(res.msg || '添加失败');
+    }
+}
+
+function openEdit(item) {
+    document.getElementById('editId').value = item.id;
+    document.getElementById('editTitle').value = item.title;
+    document.getElementById('editType').value = item.notice_type;
+    document.getElementById('editSummary').value = item.summary || '';
+    document.getElementById('editContent').value = item.content;
+    openModal('editModal');
+}
+
+async function doEdit() {
+    const id = document.getElementById('editId').value;
+    const title = document.getElementById('editTitle').value.trim();
+    const content = document.getElementById('editContent').value;
+    const summary = document.getElementById('editSummary').value.trim();
+    const notice_type = document.getElementById('editType').value;
+    if (!title || !content) { msg('请填写标题和正文'); return; }
+    const url = `/api/admin/notice/edit?id=${id}&title=${encodeURIComponent(title)}&content=${encodeURIComponent(content)}&summary=${encodeURIComponent(summary)}&notice_type=${notice_type}`;
+    const res = await request(url, 'PUT');
+    if (res.code === 0) {
+        msg('更新成功');
+        closeModal('editModal');
+        loadList(currentPage);
+    } else {
+        msg(res.msg || '更新失败');
+    }
+}
+
+async function doDelete(id) {
+    if (!confirm('确认删除该公告？')) return;
+    const res = await request(`/api/admin/notice/delete?id=${id}`, 'DELETE');
+    if (res.code === 0) {
+        msg('删除成功');
+        loadList(currentPage);
+    } else {
+        msg(res.msg || '删除失败');
+    }
+}
+
+window.onload = () => loadList(1);
+</script>
+{% endblock %}

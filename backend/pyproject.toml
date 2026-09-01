@@ -12,7 +12,9 @@ name = "loongguard"
 version = "0.1.0"
 description = "基于 LoongArch 的幼儿园端侧 AI 安全监护系统"
 readme = "README.md"
-requires-python = ">=3.11"
+# 统一 Python 版本约束：3.11+ 支持 str | None 语法和 match 语句
+# 板端实际使用 Python 3.13.5，开发机使用 3.13.x
+requires-python = ">=3.11,<3.14"
 license = {text = "MIT"}
 authors = [
     {name = "LoongGuard Team"},
@@ -37,6 +39,16 @@ dependencies = [
     "paramiko>=3.3.0",
     # Prometheus 监控指标
     "prometheus-client>=0.19.0",
+    # 家长端（微信小程序 + 管理后台）
+    "aiohttp-jinja2>=1.6",
+    "Jinja2>=3.1.0",
+    "PyJWT>=2.8.0",
+    "passlib>=1.7.4",
+    "openpyxl>=3.1.0",
+    # 语音模块
+    "openwakeword>=0.6.0",
+    "pocketsphinx>=5.1.1",
+    "pyttsx3>=2.90",
 ]
 
 # ── 可选依赖组 ───────────────────────────────────────────────
@@ -73,9 +85,6 @@ extend-exclude = ["models", "deploy"]
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP"]
 ignore = [
-    # run.py/scripts/tests 普遍采用 sys.path.insert 后再导入的启动模式，
-    # E402 对这类结构性场景是误报
-    "E402",
     # UP042 (str,Enum) -> StrEnum 会改变 str()/format() 序列化行为，
     # 涉及 API/DB 序列化路径，收益低风险高，保持现状
     "UP042",
@@ -86,5 +95,7 @@ ignore = [
 known-first-party = ["loongguard", "config"]
 
 # ── Setuptools 包发现 ────────────────────────────────────────
+# src-layout: 包位于 src/ 目录下，config 位于项目根目录
 [tool.setuptools.packages.find]
-include = ["loongguard*", "config*"]
+where = [".", "src"]
+include = ["config*", "loongguard*"]

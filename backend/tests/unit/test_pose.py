@@ -11,16 +11,13 @@ MoveNet-Lightning 姿态估计模块单元测试
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 import pytest
 
-# 将项目根目录加入 sys.path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.settings import PoseConfig
 from loongguard.pose.movenet import MoveNetLightning

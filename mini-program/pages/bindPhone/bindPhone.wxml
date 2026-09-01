@@ -1,0 +1,83 @@
+<!-- 登录绑定页面：我的逻辑 + 队友 UI -->
+<view class="login-page">
+  <!-- 顶部留白 -->
+  <view class="top-space"></view>
+
+  <!-- Logo 和标题 -->
+  <view class="logo-section">
+    <view class="logo-box">
+      <view class="logo-shield"></view>
+    </view>
+    <view class="title">幼儿园 AI 安全卫士</view>
+    <view class="subtitle">守护每一个孩子的成长时刻</view>
+  </view>
+
+  <!-- 表单区域 -->
+  <view class="form-section">
+    <!-- 头像选择（保留新版 chooseAvatar） -->
+    <view class="avatar-wrap">
+      <button class="avatar-btn" open-type="chooseAvatar" bind:chooseavatar="onChooseAvatar">
+        <image wx:if="{{avatar}}" src="{{avatar}}" class="avatar-img" />
+        <view wx:else class="avatar-placeholder">点击选择头像</view>
+      </button>
+    </view>
+
+    <!-- 昵称输入（保留新版 type="nickname"） -->
+    <view class="input-group">
+      <view class="input-icon">😊</view>
+      <input
+        class="form-input"
+        type="nickname"
+        placeholder="请输入昵称"
+        bindinput="inputNickname"
+        value="{{nickname}}"
+        placeholder-class="placeholder"
+      />
+    </view>
+
+    <!-- 手机号输入 -->
+    <view class="input-group">
+      <view class="input-icon">☎</view>
+      <input
+        class="form-input"
+        placeholder="请输入家长手机号"
+        bindinput="inputPhone"
+        value="{{phone}}"
+        maxlength="11"
+        type="number"
+        placeholder-class="placeholder"
+      />
+    </view>
+  </view>
+
+  <!-- 按钮区域 -->
+  <view class="btn-section">
+    <button
+      class="login-btn {{loading ? 'login-btn-loading' : ''}}"
+      bindtap="submitBind"
+      loading="{{loading}}"
+      disabled="{{loading}}"
+    >
+      <view class="btn-text">{{loading ? '登录中...' : '微信授权登录并绑定幼儿'}}</view>
+    </button>
+
+    <!-- 协议勾选 -->
+    <view class="agreement-row" bindtap="toggleAgree">
+      <view class="agreement-checkbox {{agreed ? 'checked' : ''}}">
+        <view class="check-mark" wx:if="{{agreed}}">✓</view>
+      </view>
+      <view class="agreement-text">
+        我已阅读并同意
+        <text class="link">《用户协议》</text>
+        和
+        <text class="link">《隐私条款》</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 底部说明 -->
+  <view class="footer-section">
+    <view class="footer-text">绑定后可查看孩子信息与监控</view>
+    <view class="footer-bar"></view>
+  </view>
+</view>

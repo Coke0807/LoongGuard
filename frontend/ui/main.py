@@ -4,6 +4,27 @@ import os
 # ── 加载项目根目录 .env（前后端统一环境变量，零第三方依赖）──────
 # 必须在 import ui.threads 之前执行：threads 模块导入时即读取
 # LG_WS_URL / LG_STREAM_URL（见 threads.py），遗漏会导致前端用到默认地址。
+#
+# 注意：此处的 _strip_env_value 和 _load_project_dotenv 与 backend 的
+# loongguard.utils.dotenv 模块保持同一语义，但由于前端是独立的 PyQt6 应用，
+# 无法直接导入 loongguard 包，故采用本地实现。如需修改解析逻辑，请同步更新
+# backend/src/loongguard/utils/dotenv.py。
+def _strip_env_value(value: str) -> str:
+    """与 loongguard.utils.dotenv.strip_env_value 保持同一语义：
+    引号包裹的值原样保留（内部 # 不截断）；未引号时仅 '空白+#' 视为
+    行内注释，紧跟值的 #（如 abc#def）属于值本身，防止含 # 的密码被
+    静默破坏。"""
+    value = value.strip()
+    if value[:1] in ("'", '"'):
+        end = value.find(value[0], 1)
+        if end > 0:
+            return value[1:end]
+    idx = value.find(" #")
+    if idx >= 0:
+        value = value[:idx].rstrip()
+    return value
+
+
 def _load_project_dotenv() -> None:
     """将项目根目录 .env 注入环境变量；已显式设置的变量优先，不覆盖。"""
     # __file__ = frontend/ui/main.py -> 上溯三层即项目根目录
@@ -22,9 +43,7 @@ def _load_project_dotenv() -> None:
             continue
         key, _, value = stripped.partition("=")
         key = key.strip()
-        value = value.strip()
-        if "#" in value:  # 去除行内注释
-            value = value.split("#", 1)[0].rstrip()
+        value = _strip_env_value(value)
         if not key or key in os.environ:
             continue
         os.environ[key] = value

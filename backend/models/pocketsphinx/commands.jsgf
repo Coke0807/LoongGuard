@@ -1,0 +1,42 @@
+#JSGF V1.0;
+
+/**
+ * LoongGuard 语音指令语法定义（中文词条版）
+ *
+ * 终结符限定为 cmusphinx-zh-cn-5.2 词典（cmudict-cn.dict）中
+ * 实际存在的词条（"温湿度"为按"温+湿+度"音素自动拼接的追加词条）。
+ * 识别输出为词条序列（空格分隔），经
+ * loongguard.voice.command_handler.match_command_key() 去空白
+ * 归一化后映射到指令 key。
+ */
+
+grammar commands;
+
+public <command> = <mode_switch> | <alarm_control> | <query> | <system>;
+
+<mode_switch> =
+    切换 到 正常 课堂 模式 |
+    切换 到 课堂 模式 |
+    切换 到 午睡 模式 |
+    切换 到 公共 区域 模式 |
+    切换 到 公共 巡查 模式 |
+    切换 模式 |
+    课堂 模式 |
+    午睡 模式 |
+    巡查 模式;
+
+<alarm_control> =
+    关闭 告警 |
+    关闭 当前 告警;
+
+<query> =
+    查询 温湿度 |
+    温湿度;
+
+<system> =
+    开始 录制 |
+    查看 日志 |
+    调取 日志 |
+    关闭 识别 |
+    退出 程序 |
+    关闭 程序;

@@ -13,6 +13,7 @@ LoongGuard 告警数据库持久层
 
 from __future__ import annotations
 
+import functools
 import logging
 import sqlite3
 import threading
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 def _synchronized(method):
     """用实例锁串行化对 SQLite 连接的访问（主线程与工作线程共享）"""
 
+    @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         with self._lock:
             return method(self, *args, **kwargs)

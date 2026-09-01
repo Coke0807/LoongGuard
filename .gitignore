@@ -137,3 +137,22 @@ log/
 # ──────────────────────────────────────────────
 node_modules/
 .mcp.json
+
+# ──────────────────────────────────────────────
+# 语音模块模型产物（训练/下载产出，不入库；README 与 jsgf 语法保留）
+# ──────────────────────────────────────────────
+backend/models/wakeword/*.onnx
+backend/models/wakeword/*.tflite
+backend/models/pocketsphinx/zh-cn/
+backend/models/pocketsphinx/*.dict
+# 唤醒词训练工作区（scripts/train_wakeword.py 产出）
+wakeword_ws/
+
+# ──────────────────────────────────────────────
+# 家长端运行时数据（上传图片/导入文件）与视频录制产出
+# ──────────────────────────────────────────────
+backend/data/parent/
+backend/data/recordings/
+
+# HLS 直播切片（ffmpeg 运行时产出，见 src/loongguard/media/hls_publisher.py）
+backend/data/hls/

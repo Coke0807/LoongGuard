@@ -371,3 +371,104 @@ class TestValidateConfig:
         cfg.notify = NotificationConfig(enabled=True, webhook_url="https://gw.example.com/alert")
         errors = validate_config(cfg)
         assert errors == []
+
+
+# ── LG_ENV 单 token 环境变量覆盖测试 ─────────────────────────
+
+
+class TestLGEnvOverride:
+    def test_lg_env_sets_config_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """LG_ENV=production 应生效于 config.env（回归：曾为僵尸变量）"""
+        monkeypatch.setenv("LG_ENV", "production")
+        cfg = load_config()
+        assert cfg.env == "production"
+
+    def test_lg_env_absent_defaults_development(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("LG_ENV", raising=False)
+        cfg = load_config()
+        assert cfg.env == "development"
+
+    def test_prod_redline_triggered_via_lg_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """LG_ENV=production + 未启用 Basic Auth 应触发生产红线"""
+        monkeypatch.setenv("LG_SM4_KEY", "a" * 32)
+        monkeypatch.setenv("LG_ENV", "production")
+        monkeypatch.setenv("LG_API_AUTH_ENABLED", "false")
+        cfg = load_config()
+        assert cfg.env == "production"
+        errors = validate_config(cfg)
+        assert any("Basic Auth" in e for e in errors)
+
+
+# ── .env 加载器：# 截断规则与 override 未命中告警 ─────────────
+
+
+class TestStripEnvValue:
+    def test_hash_rules(self) -> None:
+        from config.settings import _strip_env_value
+
+        # 紧跟值的 #（无空白前缀）属于值本身，不再截断
+        assert _strip_env_value("abc#def") == "abc#def"
+        # 空白+# 视为行内注释（兼容既有 .env.example 写法）
+        assert _strip_env_value("abc # comment") == "abc"
+        # 引号包裹的值内部 # 原样保留
+        assert _strip_env_value('"p@ss#word"') == "p@ss#word"
+        assert _strip_env_value("'a # b' tail") == "a # b"
+        assert _strip_env_value("plain") == "plain"
+
+
+class TestLoadDotenvHashRules:
+    def test_quoted_and_bare_hash_values(self, tmp_path, monkeypatch) -> None:
+        from config.settings import _load_dotenv
+
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            'LG_TEST_PW_QUOTED="p@ss#word"\n'
+            "LG_TEST_PW_BARE=abc#def  # 行内注释\n"
+            "LG_TEST_PLAIN=hello world\n",
+            encoding="utf-8",
+        )
+        keys = ("LG_TEST_PW_QUOTED", "LG_TEST_PW_BARE", "LG_TEST_PLAIN")
+        saved = {k: os.environ.get(k) for k in keys}
+        try:
+            _load_dotenv(env_file)
+            assert os.environ["LG_TEST_PW_QUOTED"] == "p@ss#word"
+            assert os.environ["LG_TEST_PW_BARE"] == "abc#def"
+            assert os.environ["LG_TEST_PLAIN"] == "hello world"
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+
+class TestUnmatchedEnvWarning:
+    def test_unknown_section_warns(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """LG_ 前缀但节名/字段名错误的变量应告警而非静默忽略"""
+        import logging
+
+        monkeypatch.setenv("LG_BOGUS_SECTION_VALUE", "1")
+        with caplog.at_level(logging.WARNING, logger="config.settings"):
+            load_config()
+        assert any(
+            "LG_BOGUS_SECTION_VALUE" in r.getMessage() for r in caplog.records
+        )
+
+    def test_known_non_config_section_silent(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """白名单变量（LG_SM4_KEY 等显式读取类）不应告警"""
+        import logging
+
+        monkeypatch.setenv("LG_SM4_KEY", "a" * 32)
+        with caplog.at_level(logging.WARNING, logger="config.settings"):
+            load_config()
+        assert not any("LG_SM4_KEY" in r.getMessage() for r in caplog.records)

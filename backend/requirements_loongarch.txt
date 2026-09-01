@@ -32,5 +32,23 @@ aiohttp>=3.12.13                 # 实测解析至 3.13.5
 # ── Prometheus 监控（纯 Python）─────────────────────────────
 prometheus_client>=0.19.0        # py3-none-any
 
+# ── 家长端（纯 Python，龙芯源直接安装）──────────────────────
+aiohttp-jinja2>=1.6              # 管理后台模板渲染
+Jinja2>=3.1.0
+PyJWT>=2.8.0
+passlib>=1.7.4
+openpyxl>=3.1.0
+
+# ── 语音模块（openWakeWord 唤醒；PocketSphinx 走 apt）───────
+# openwakeword 为纯 Python，依赖 onnxruntime/scipy/tflite-runtime；
+# 龙芯源均有 loongarch64 包（tflite-runtime 若缺失可
+#   pip install openwakeword --no-deps 且确保 onnxruntime+scipy 已装，
+#   onnx 模型推理不依赖 tflite）
+openwakeword>=0.6.0
+# PocketSphinx 指令识别（系统包，勿走 pip）：
+#   sudo apt install pocketsphinx python3-pocketsphinx
+# TTS 播报与录音（系统包）：
+#   sudo apt install espeak alsa-utils
+
 # ── SSH 远程同步（纯 Python；仅开发机 sync.py 使用，板端可选）─
 # paramiko>=3.3.0

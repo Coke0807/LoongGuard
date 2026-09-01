@@ -19,17 +19,13 @@ Windows 可视化测试 -- 实时展示摄像头画面 + 检测框 + 告警信�
 from __future__ import annotations
 
 import argparse
-import sys
 import time
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-# 确保项目根目录在 sys.path
 PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from config import load_config
 from loongguard.camera.v4l2_capture import V4L2Capture

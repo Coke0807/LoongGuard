@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="layout-wrap">
+    <div class="sidebar">
+        <div class="sidebar-logo">
+            <h3><i class="fa-solid fa-child-reaching"></i>幼儿园 AI 安全卫士后端管理系统</h3>
+        </div>
+        <ul class="sidebar-menu">
+            <li><a href="/admin/index"><i class="fa-solid fa-house"></i> 首页仪表盘</a></li>
+            <li><a href="/admin/student"><i class="fa-solid fa-child"></i> 幼儿管理</a></li>
+            <li><a href="/admin/class"><i class="fa-solid fa-chalkboard-user"></i> 班级管理</a></li>
+            <li><a href="/admin/parent" class="active"><i class="fa-solid fa-users"></i> 家长管理</a></li>
+            <li><a href="/admin/import"><i class="fa-solid fa-file-import"></i> 批量导入</a></li>
+            <li><a href="/admin/growth"><i class="fa-solid fa-camera"></i> 成长记录</a></li>
+            <li><a href="/admin/notice"><i class="fa-solid fa-bullhorn"></i> 公告管理</a></li>
+            <li><a href="/admin/account"><i class="fa-solid fa-user-shield"></i> 管理员账号</a></li>
+            <li><a href="/admin/logout"><i class="fa-solid fa-right-from-bracket"></i> 退出登录</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <h2 class="page-title"><i class="fa-solid fa-users"></i> 家长信息管理</h2>
+            <div class="btn-group">
+                <a href="/api/admin/parent/export"><button class="btn btn-primary">导出</button></a>
+            </div>
+        </div>
+        <div class="card">
+            <div style="display:flex;gap:10px;margin-bottom:15px;">
+                <input class="form-input" id="searchKey" placeholder="姓名/手机号/openid搜索" style="width:300px;">
+                <button class="btn btn-pink" onclick="loadList(1)">搜索</button>
+            </div>
+            <div class="table-wrap">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>OpenID</th>
+                            <th>家长姓名</th>
+                            <th>手机号</th>
+                            <th>绑定幼儿</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="parentTbody"></tbody>
+                </table>
+            </div>
+            <div class="pagination" id="pageBox"></div>
+        </div>
+    </div>
+</div>
+
+<!-- 绑定幼儿弹窗 -->
+<div class="modal-mask" id="bindModal">
+    <div class="modal-box">
+        <div class="modal-head">
+            <span>绑定幼儿</span>
+            <span class="modal-close">&times;</span>
+        </div>
+        <input type="hidden" id="bindOpenid">
+        <div class="form-item">
+            <label>学生姓名</label>
+            <input class="form-input" id="bindStudentName" placeholder="输入学生姓名">
+        </div>
+        <div class="form-item">
+            <label>班级名称</label>
+            <input class="form-input" id="bindClassName" placeholder="输入班级名称">
+        </div>
+        <div style="text-align:right;margin-top:20px;">
+            <button class="btn btn-gray" onclick="closeModal('bindModal')">取消</button>
+            <button class="btn btn-pink" onclick="doBind()">确认绑定</button>
+        </div>
+    </div>
+</div>
+
+<script>
+let page = 1;
+const size = 10;
+async function loadList(p) {
+    page = p;
+    const kw = $('#searchKey').value.trim();
+    const res = await request(`/api/admin/parent/list?page=${p}&page_size=${size}&keyword=${kw}`);
+    const tb = $('#parentTbody');
+    tb.innerHTML = '';
+    res.data.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${item.id}</td>
+            <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;">${item.openid}</td>
+            <td>${item.parent_name || '-'}</td>
+            <td>${item.phone || '-'}</td>
+            <td>${item.bound_students || '-'}</td>
+            <td>${item.create_time}</td>
+            <td>
+                <button class="btn btn-green" onclick="openBind('${item.openid}')">绑定幼儿</button>
+            </td>
+        `;
+        tb.appendChild(tr);
+    })
+    renderPagination(res.total, p, size, loadList);
+}
+function openBind(openid) {
+    $('#bindOpenid').value = openid;
+    $('#bindStudentName').value = '';
+    $('#bindClassName').value = '';
+    openModal('bindModal');
+}
+async function doBind() {
+    const openid = $('#bindOpenid').value;
+    const studentName = $('#bindStudentName').value.trim();
+    const className = $('#bindClassName').value.trim();
+    if(!studentName || !className) {
+        msg("请输入学生姓名和班级名称");
+        return;
+    }
+    const url = `/api/admin/parent/bind?openid=${encodeURIComponent(openid)}&student_name=${encodeURIComponent(studentName)}&class_name=${encodeURIComponent(className)}`;
+    const res = await request(url, "POST");
+    if(res.code === 0) {
+        msg("绑定成功");
+        closeModal('bindModal');
+        loadList(page);
+    } else {
+        msg(res.msg || "绑定失败");
+    }
+}
+window.onload = () => loadList(1);
+</script>
+{% endblock %}

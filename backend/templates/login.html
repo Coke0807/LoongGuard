@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="login-wrap">
+    <div class="login-card">
+        <h2 class="login-title"><i class="fa-solid fa-school"></i> 幼儿园 AI 安全卫士后端管理系统-管理员登录</h2>
+        {% if err %}
+        <div class="err-tip">{{ err }}</div>
+        {% endif %}
+        <form action="/admin/login" method="post">
+            <div class="form-item">
+                <label>账号</label>
+                <input class="form-input" name="username" required placeholder="请输入管理员账号">
+            </div>
+            <div class="form-item">
+                <label>密码</label>
+                <input class="form-input" type="password" name="password" required placeholder="请输入密码">
+            </div>
+            <div style="margin-top:24px;">
+                <button class="btn btn-pink" style="width:100%;padding:11px;font-size:16px;">登录后台</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

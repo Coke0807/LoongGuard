@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -157,6 +158,13 @@ class MediaConfig:
     - audio_backend: command（系统命令）/ dummy（桩）
     - stream_publisher: mjpeg（开发/局域网桩）/ webrtc（板端预留）
     - webrtc_signal_port: 小程序 WebRTC 信令端口
+    - hls_*: 家长端远程观看的 HLS 直播（ffmpeg 切片，见 media/hls_publisher.py）
+
+    HLS 工作方式：ffmpeg 消费回环 MJPEG 源（或板端 v4l2 设备）切片输出
+    data/hls/live.m3u8，服务端经 /stream/live.m3u8 + /stream/<seg>.ts 提供，
+    由带过期时间的 HMAC token 保护（家长端经 /api/wx/stream/url 获取带
+    token 的地址）。无观看者超过 idle_timeout 自动停止编码省算力，下次
+    请求播放列表时自动重启。ffmpeg 缺失或密钥未配置时整体降级停用。
     """
 
     # 音频后端
@@ -165,6 +173,31 @@ class MediaConfig:
     stream_publisher: str = "mjpeg"
     # WebRTC 信令端口（stream_publisher="webrtc" 时生效）
     webrtc_signal_port: int = 8888
+
+    # ── HLS 远程直播（家长端）─────────────────────────────
+    # 是否启用；ffmpeg 缺失/密钥缺失时即便 true 也会自动停用
+    hls_enabled: bool = True
+    # ffmpeg 输入源：loopback=回环消费本服务 MJPEG /stream；
+    # 板端可填 v4l2 设备路径（如 /dev/video0）降低一层转码开销
+    hls_input: str = "loopback"
+    # 强制输入 demuxer（如 mpjpeg）；留空由 ffmpeg 自动探测
+    hls_input_format: str = ""
+    # 输出视频宽度上限（等比缩放，高度自动取偶）
+    hls_video_width: int = 640
+    # 输出帧率
+    hls_fps: int = 15
+    # 输出码率（ffmpeg -b:v）
+    hls_video_bitrate: str = "800k"
+    # 单个 TS 分片时长（秒），越小延迟越低
+    hls_segment_duration_sec: float = 2.0
+    # 播列窗口内的分片数（回看窗口 ≈ list_size * segment_duration）
+    hls_list_size: int = 6
+    # 无观看者超过该秒数自动停止 ffmpeg；有请求时自动重启
+    hls_idle_timeout_sec: float = 180.0
+    # 观看 token 有效期（秒）
+    hls_token_ttl_sec: int = 21600
+    # token 签名密钥；留空回退 LG_SM4_KEY，两者都空则 HLS 停用（fail-closed）
+    hls_stream_secret: str = ""
 
 
 @dataclass
@@ -337,6 +370,45 @@ class NotificationConfig:
 
 
 @dataclass
+class VoiceConfig:
+    """
+    语音唤醒/指令模块配置（openWakeWord + PocketSphinx 双引擎）
+
+    环境变量覆盖（LG_VOICE_ 前缀）：
+        LG_VOICE_ENABLED=false          # 关闭语音模块
+        LG_VOICE_WAKE_THRESHOLD=0.5     # 唤醒判定阈值
+        LG_VOICE_WAKE_TIMEOUT_SEC=8.0   # 唤醒后等待指令超时
+        LG_VOICE_TTS_BACKEND=auto       # auto/pyttsx3/espeak/dummy
+
+    降级策略：唤醒模型或 PocketSphinx 模型缺失/依赖不可用时，
+    VoiceService 记录警告并保持待机，不阻塞 Pipeline 主链路。
+    """
+
+    # 是否启用语音模块
+    enabled: bool = True
+    # 采样率（openWakeWord / PocketSphinx 均要求 16kHz）
+    sample_rate: int = 16000
+    # openWakeWord 自定义唤醒词模型（训练产出，~200KB）
+    wake_model_path: str = str(_DEFAULT_MODEL_DIR / "wakeword" / "my_wakeword.onnx")
+    # 唤醒判定阈值（0~1，越高越保守）
+    wake_threshold: float = 0.5
+    # 唤醒冷却秒数（防止连续重复唤醒）
+    wake_cooldown_sec: float = 3.0
+    # 唤醒后等待指令的超时秒数，超时回到待机
+    wake_timeout_sec: float = 8.0
+    # 唤醒后单次指令录音时长（秒）
+    command_duration_sec: float = 3.0
+    # PocketSphinx 中文声学模型目录
+    sphinx_model_dir: str = str(_DEFAULT_MODEL_DIR / "pocketsphinx" / "zh-cn")
+    # PocketSphinx 中文词典
+    sphinx_dict_path: str = str(_DEFAULT_MODEL_DIR / "pocketsphinx" / "cmudict-cn.dict")
+    # PocketSphinx 指令 JSGF 语法
+    sphinx_jsgf_path: str = str(_DEFAULT_MODEL_DIR / "pocketsphinx" / "commands.jsgf")
+    # TTS 后端：auto（按平台）/ pyttsx3 / espeak / dummy
+    tts_backend: str = "auto"
+
+
+@dataclass
 class AppConfig:
     """应用总配置"""
 
@@ -347,6 +419,7 @@ class AppConfig:
     motion: MotionConfig = field(default_factory=MotionConfig)
     face: FaceConfig = field(default_factory=FaceConfig)
     media: MediaConfig = field(default_factory=MediaConfig)
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
     alarm: AlarmConfig = field(default_factory=AlarmConfig)
     crypto: CryptoConfig = field(default_factory=CryptoConfig)
     api: APIConfig = field(default_factory=APIConfig)
@@ -396,6 +469,13 @@ def load_config(source: str | None = None) -> AppConfig:
 
     # 环境变量覆盖（LG_ 前缀），始终生效
     _apply_env_overrides(config)
+
+    # LG_ENV 为单 token 变量（无 SECTION_KEY 结构），通用覆盖机制无法匹配，
+    # 必须显式读取。这是 LG_ENV=production 触发 validate_config 生产红线
+    # （强制 Basic Auth、禁止 0.0.0.0）的唯一通道。
+    env_name = os.environ.get("LG_ENV", "").strip()
+    if env_name:
+        config.env = env_name
 
     # 平台默认摄像头设备：Windows 用索引，Linux 用 /dev/videoN
     # 设计动机：避免同一份 .env 在双平台语义不一致导致打不开摄像头。
@@ -460,55 +540,66 @@ def validate_config(config: AppConfig) -> list[str]:
     return errors
 
 
-def _load_dotenv(dotenv_path: Path | str | None = None) -> None:
-    """
-    极简 .env 加载器（零第三方依赖）。
+# 导入共享的 .env 加载逻辑（消除代码重复）
+# 设计动机：backend/config/settings.py 和 frontend/ui/main.py 共用同一套解析语义
+try:
+    from loongguard.utils.dotenv import load_dotenv as _load_dotenv
+    from loongguard.utils.dotenv import strip_env_value as _strip_env_value
+except ImportError:
+    # 降级：如果 loongguard 包未安装（如仅导入 config 模块），使用本地实现
+    # 这种情况仅在开发初期或配置测试时出现
+    import re as _re
 
-    设计动机：
-        避免为加载 .env 引入 python-dotenv 依赖（LoongArch 环境包管理
-        不便）。已存在于 os.environ 的变量优先，不覆盖，保证 shell 显式
-        注入的配置具备最高优先级。
-
-    同时检测文件内重复 KEY 并告警，避免"后值覆盖前值"的隐性 bug。
-    """
-    # 默认读取"项目根目录 .env"（前后端统一，单一配置源）
-    # __file__ -> backend/config/settings.py，parents[2] 即项目根目录
-    path = Path(dotenv_path) if dotenv_path else Path(__file__).resolve().parents[2] / ".env"
-    if not path.exists():
-        return
-
-    seen: dict[str, int] = {}
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        logger.warning("无法读取 .env 文件: %s", path)
-        return
-
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in stripped:
-            continue
-        key, _, value = stripped.partition("=")
-        key = key.strip()
+    def _strip_env_value(value: str) -> str:
+        """本地实现：解析 .env 值（与 loongguard.utils.dotenv 保持同一语义）"""
         value = value.strip()
-        # 去除行内注释（# 之后视为注释），值内 # 前内容保留
-        if "#" in value:
-            value = value.split("#", 1)[0].rstrip()
-        if not key:
-            continue
+        if value[:1] in ("'", '"'):
+            end = value.find(value[0], 1)
+            if end > 0:
+                return value[1:end]
+        match = _re.search(r"\s#", value)
+        if match:
+            value = value[: match.start()].rstrip()
+        return value
 
-        # 重复 KEY 检测
-        if key in seen:
-            logger.warning(
-                ".env 中 KEY 重复定义: %s (第 %d 行 与 第 %d 行)，后值将覆盖前值",
-                key, seen[key], lines.index(line) + 1,
-            )
+    def _load_dotenv(dotenv_path: Path | str | None = None) -> None:
+        """本地实现：极简 .env 加载器"""
+        if dotenv_path:
+            path = Path(dotenv_path)
+            if not path.exists():
+                return
         else:
-            seen[key] = lines.index(line) + 1
+            here = Path(__file__).resolve()
+            candidates = [here.parents[1] / ".env", here.parents[2] / ".env"]
+            path = next((c for c in candidates if c.exists()), None)
+            if path is None:
+                return
 
-        # 已存在的环境变量优先，不覆盖
-        if key not in os.environ:
-            os.environ[key] = value
+        seen: dict[str, int] = {}
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            logger.warning("无法读取 .env 文件: %s", path)
+            return
+
+        for line_no, line in enumerate(lines, start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, _, value = stripped.partition("=")
+            key = key.strip()
+            value = _strip_env_value(value)
+            if not key:
+                continue
+            if key in seen:
+                logger.warning(
+                    ".env 中 KEY 重复定义: %s (第 %d 行 与 第 %d 行)，后值将覆盖前值",
+                    key, seen[key], line_no,
+                )
+            else:
+                seen[key] = line_no
+            if key not in os.environ:
+                os.environ[key] = value
 
 
 def _load_from_json(path: Path) -> AppConfig:
@@ -527,6 +618,32 @@ def _load_from_json(path: Path) -> AppConfig:
             setattr(config, section_name, section_data)
 
     return config
+
+
+# 合法的"非 AppConfig 配置节"LG_ 变量首段（由各模块显式 os.environ 读取，
+# 不经通用覆盖机制）。这些变量即使未命中任何配置节也不应告警；
+# 不在白名单且未命中的 LG_ 变量（如旧名 LG_GPIO_*）一律 warning，
+# 避免"配置写了却静默失效"的隐性 bug 再次发生。
+_KNOWN_NON_CONFIG_SECTIONS = frozenset({
+    "env",      # LG_ENV（单 token，显式处理）
+    "sm4",      # LG_SM4_KEY
+    "auth",     # LG_AUTH_USER / LG_AUTH_PASS
+    "ssh",      # LG_SSH_*（scripts/sync.py、remote_exec.py）
+    "parent",   # LG_PARENT_*（家长端，parent_routes/parent_db/parent_utils）
+    "stream",   # LG_STREAM_URL（前端）
+    "ws",       # LG_WS_URL（前端）
+    "onnx",     # LG_ONNX_INTRA_OP_THREADS（utils/onnx_session.py）
+    "debug",    # LG_DEBUG_WINDOW（pipeline 显式读取）
+})
+
+
+def _warn_unmatched_env(section_name: str, env_key: str) -> None:
+    if section_name not in _KNOWN_NON_CONFIG_SECTIONS:
+        logger.warning(
+            "环境变量 %s 未命中任何配置字段（LG_<SECTION>_<KEY> 需与 "
+            "config/settings.py 的配置节和字段名对应），已忽略",
+            env_key,
+        )
 
 
 def _apply_env_overrides(config: AppConfig) -> None:
@@ -552,6 +669,7 @@ def _apply_env_overrides(config: AppConfig) -> None:
 
         section = getattr(config, section_name, None)
         if section is None or not hasattr(section, "__dict__"):
+            _warn_unmatched_env(section_name, env_key)
             continue
 
         # 匹配 dataclass 字段名（不区分大小写）
@@ -563,6 +681,7 @@ def _apply_env_overrides(config: AppConfig) -> None:
                 matched_attr = attr_name
                 break
         if matched_attr is None:
+            _warn_unmatched_env(section_name, env_key)
             continue
 
         # 类型转换

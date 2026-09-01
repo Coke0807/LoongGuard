@@ -31,6 +31,11 @@ User=loongguard
 Group=loongguard
 
 # 自动加载全部 LG_* 环境变量（KEY=value 格式，无需 export）
+# ⚠️ 注意：systemd 的 EnvironmentFile 不支持行内注释——
+#    "KEY=value  # 说明" 会把 "  # 说明" 一并当作值注入。
+#    生产 .env 请勿书写行内注释（整行注释 # 开头不受影响）；
+#    含 # 的值请用双引号包裹。若 systemd 注入失败，Python 侧
+#    _load_dotenv 会兜底加载同一文件（backend/.env，可正确剥离注释）。
 EnvironmentFile=/opt/loongguard/backend/.env
 
 # 使用项目虚拟环境启动主循环（统一入口 run.py）

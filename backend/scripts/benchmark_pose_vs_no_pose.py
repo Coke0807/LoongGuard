@@ -15,14 +15,9 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from pathlib import Path
 
 import cv2
 import numpy as np
-
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from config import load_config
 from loongguard.camera.v4l2_capture import V4L2Capture

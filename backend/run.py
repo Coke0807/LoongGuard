@@ -7,23 +7,22 @@ LoongGuard 后端统一启动入口
 
 使用方式：
     cd backend
+    # 先安装为开发模式（仅首次）
+    pip install -e ".[dev]"
+    # 然后运行
     python run.py [config/default.json]
 
 说明：
     - 默认加载 config/default.json（与旧入口行为一致）
     - 端口被占用等致命错误会以非零退出码结束，交由进程守护（start.ps1 / systemd）重启
+    - 依赖标准 pip install -e 安装方式，不再使用 sys.path.insert hack
 """
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-# backend/ 根目录使 config/ 可导入；backend/src 使 loongguard 顶级包可导入（标准 src-layout）
-sys.path.insert(0, os.path.join(BACKEND_DIR, "src"))
-sys.path.insert(0, BACKEND_DIR)
-
+# 标准包导入：依赖 pip install -e 安装后，loongguard 和 config 包可直接导入
 from loongguard.pipeline import main
 
 if __name__ == "__main__":

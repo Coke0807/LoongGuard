@@ -1,0 +1,25 @@
+/* 全局样式 */
+page {
+  background: #F5F8FC;
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: #1f2937;
+  font-size: 28rpx;
+  min-height: 100vh;
+}
+
+page, view, text, button, input {
+  box-sizing: border-box;
+}
+
+button {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  line-height: normal;
+}
+
+button::after {
+  border: none;
+}

@@ -1,0 +1,107 @@
+<view class="page-container">
+  <view class="page-content">
+
+    <!-- 有绑定幼儿 -->
+    <block wx:if="{{hasPermission}}">
+      <!-- 播放器区域 -->
+      <view class="video-container">
+        <video wx:if="{{videoSrc}}" id="monitorVideo" class="monitor-video"
+               src="{{videoSrc}}" autoplay muted="{{muted}}"
+               object-fit="contain" controls="{{true}}"
+               show-center-play-btn="{{false}}"
+               binderror="onVideoError" />
+        <block wx:else>
+          <image class="video-image" src="/images/monitor/monitor_classroom.jpg" mode="aspectFill" />
+          <view class="live-tag">
+            <view class="live-dot"></view>
+            <text>LIVE</text>
+          </view>
+          <view wx:if="{{loading}}" class="stream-mask">
+            <view class="stream-spinner"></view>
+            <text class="stream-mask-text">正在连接直播流...</text>
+          </view>
+          <view wx:elif="{{streamError}}" class="stream-mask">
+            <text class="stream-mask-text">{{streamError}}</text>
+          </view>
+        </block>
+        <view wx:if="{{videoSrc}}" class="timestamp">{{currentTime}}</view>
+      </view>
+
+      <!-- 当前观看对象 + 操作 -->
+      <view class="detail-card">
+        <view class="detail-header">
+          <view class="detail-info">
+            <view class="detail-title">{{currentStudent.name}}</view>
+            <view class="detail-sub">班级：{{currentStudent.className}}</view>
+          </view>
+          <view class="detail-status">
+            <view class="status-dot dot-online"></view>
+            <text class="status-text text-online">直播中</text>
+          </view>
+        </view>
+
+        <view class="action-grid">
+          <view class="action-btn" bindtap="goFullscreen">
+            <view class="action-icon-box">
+              <view class="icon-fullscreen"></view>
+            </view>
+            <text class="action-label">全屏</text>
+          </view>
+          <view class="action-btn" bindtap="toggleMute">
+            <view class="action-icon-box">
+              <view class="icon-sound"></view>
+            </view>
+            <text class="action-label">{{muted ? '开声音' : '静音'}}</text>
+          </view>
+          <view class="action-btn" bindtap="refreshStream">
+            <view class="action-icon-box">
+              <view class="icon-camera"></view>
+            </view>
+            <text class="action-label">刷新</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="privacy-tip">
+        <view class="tip-icon-box">
+          <view class="tip-shield"></view>
+        </view>
+        <view class="tip-text">监控内容仅供家长查看孩子在园情况，请勿传播视频截图或录像，共同保护幼儿隐私安全。</view>
+      </view>
+
+      <!-- 绑定幼儿列表（切换观看对象） -->
+      <view class="camera-list-section">
+        <view class="section-title">我的幼儿</view>
+        <view wx:for="{{studentList}}" wx:key="id"
+              class="camera-item {{currentStudent.id === item.id ? 'camera-item-active' : ''}}"
+              bindtap="switchStudent" data-id="{{item.id}}">
+          <view class="camera-icon-box {{item.switch === 1 ? 'icon-online' : 'icon-offline'}}">
+            <view class="cam-mini {{item.switch === 1 ? 'cam-mini-on' : 'cam-mini-off'}}"></view>
+          </view>
+          <view class="camera-info">
+            <view class="camera-name">{{item.name}}</view>
+            <view class="camera-meta">{{item.className}}</view>
+          </view>
+          <view class="camera-status-tag {{item.switch === 1 ? 'tag-online' : 'tag-offline'}}">
+            {{item.statusText}}
+          </view>
+        </view>
+      </view>
+    </block>
+
+    <!-- 无绑定/无权限状态 -->
+    <block wx:else>
+      <view class="no-permission-card">
+        <view class="lock-icon-wrapper">
+          <view class="lock-body">
+            <view class="lock-shackle"></view>
+          </view>
+        </view>
+        <view class="no-perm-title">暂无观看权限</view>
+        <view class="no-perm-desc">{{permMsg || '您当前尚未开通实时监控查看权限，请联系幼儿园管理员申请开通。'}}</view>
+        <view class="perm-retry-btn" bindtap="fetchStudents">重新加载</view>
+      </view>
+    </block>
+
+  </view>
+</view>

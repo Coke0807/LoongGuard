@@ -15,7 +15,7 @@ import os
 import signal
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -36,6 +36,8 @@ from loongguard.api.metrics import (
 from loongguard.api.server import AlertAPIServer
 from loongguard.camera.frame_buffer import FrameBuffer
 from loongguard.camera.v4l2_capture import Frame, V4L2Capture
+from loongguard.core.config_watcher import DynamicConfig
+from loongguard.core.event_bus import Event, EventPriority, get_event_bus
 from loongguard.crypto.sm4_logger import SM4Logger
 from loongguard.db.database import AlertDatabase
 from loongguard.detection.yolo26_nano import YOLO26Nano
@@ -45,8 +47,55 @@ from loongguard.motion.frame_diff import FrameDiffDetector
 from loongguard.pose.movenet import MoveNetLightning
 from loongguard.roi.roi_scheduler import ROIScheduler
 from loongguard.utils.schema import AlertLog, AlertType, BoundingBox
+from loongguard.voice import VoiceService
 
 logger = logging.getLogger(__name__)
+
+
+class _FrameRecorder:
+    """
+    摄像头帧录制器（语音"开始录制"指令的后端实现）
+
+    Pipeline 主循环每帧调用 write()，RGB 帧转 BGR 后写入 mp4。
+    单次录制时长受 max_sec 限制，防止无人值守时写满磁盘。
+    """
+
+    def __init__(self, path: str, width: int, height: int, fps: float,
+                 max_sec: float = 60.0) -> None:
+        import cv2  # opencv 为硬依赖，此处延迟导入避免顶层变更
+
+        self._path = path
+        self._max_sec = max_sec
+        self._start = time.monotonic()
+        self._writer = cv2.VideoWriter(
+            path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (int(width), int(height))
+        )
+        self.frame_count = 0
+        logger.info("Recording started: %s (max %.0fs)", path, max_sec)
+
+    @property
+    def expired(self) -> bool:
+        """是否超过最大录制时长（由主循环检查并自动停止）"""
+        return (time.monotonic() - self._start) >= self._max_sec
+
+    def write(self, frame: Frame) -> None:
+        import cv2
+
+        if frame.data.size == 0:
+            return
+        self._writer.write(cv2.cvtColor(frame.data, cv2.COLOR_RGB2BGR))
+        self.frame_count += 1
+
+    def stop(self) -> str | None:
+        """结束录制并释放文件句柄，返回录制文件路径"""
+        if self._writer is None:
+            return None
+        path = self._path
+        count = self.frame_count
+        self._writer.release()
+        self._writer = None
+        logger.info("Recording stopped: %s (%d frames)", path, count)
+        return path
 
 
 class Pipeline:
@@ -76,6 +125,13 @@ class Pipeline:
         self._fps_window: list[float] = []  # FPS 滑动窗口
         self._last_inference_time: float = 0.0  # 上一轮推理耗时（用于自适应节流）
         self._inference_time_budget: float = 1.0 / max(config.camera.fps, 1)  # 单帧推理时间预算
+
+        # ── 事件总线（用于解耦告警处理逻辑）─────────────────────
+        self._event_bus = get_event_bus()
+
+        # ── 配置热更新（支持运行时动态调整参数）─────────────────
+        # 设计动机：无需重启即可调整检测阈值、告警策略等参数
+        self._dynamic_config: DynamicConfig | None = None
 
         # ── 子模块实例化 ──────────────────────────────────────
         self._camera = V4L2Capture(config.camera)
@@ -118,8 +174,26 @@ class Pipeline:
         # ── 新增：外部告警通知（webhook，无人值守防漏报）──────
         self._notifier = AlertNotifier(config.notify)
 
+        # ── 新增：HLS 直播发布器（家长端远程观看）────────────
+        # ffmpeg 缺失/密钥缺失时 HLSPublisher 内部 enabled=False 并安静停用，
+        # 不阻塞主链路；对应端点返回 404，MJPEG 本地观看不受影响。
+        self._hls = None
+
         # ── 新增：数据库定期备份任务 ─────────────────────────
         self._backup_task: asyncio.Task | None = None
+
+        # ── 新增：语音服务（openWakeWord 唤醒 + PocketSphinx 指令）──
+        # 缺依赖/模型时 VoiceService 内部安静降级，不阻塞主链路
+        self._current_mode = "normal"  # normal / nap / public
+        self._recorder: _FrameRecorder | None = None
+        self._voice = VoiceService(config.voice, callbacks={
+            "set_mode": self.set_mode,
+            "ack_all": self.ack_all_alerts,
+            "get_sensor_data": self.get_sensor_data,
+            "start_record": self.start_recording,
+            "get_recent_logs": self.get_recent_logs,
+            "shutdown": self._voice_shutdown,
+        })
 
     async def start(self) -> None:
         """
@@ -176,8 +250,30 @@ class Pipeline:
             "Stream publisher ready: %s", self._config.media.stream_publisher
         )
 
+        # ── HLS 直播发布器（家长端远程观看）──────────────────
+        # 必须在 API 服务启动之后拉起：loopback 输入源是本服务 MJPEG 端点
+        if self._config.media.hls_enabled:
+            from loongguard.media.hls_publisher import HLSPublisher
+
+            self._hls = HLSPublisher(
+                self._config.media,
+                output_dir=Path(__file__).resolve().parents[2] / "data" / "hls",
+                stream_base_url=f"http://127.0.0.1:{self._config.api.port}/stream",
+            )
+            self._hls.start()
+        self._api.set_hls_publisher(self._hls)
+        if self._hls is not None and self._hls.enabled:
+            logger.info("HLS live stream ready: /stream/live.m3u8 (token-protected)")
+
         # ── 新增：外部告警通知器启动 ─────────────────────────
         await self._notifier.start()
+
+        # ── 新增：语音服务启动（唤醒词/模型缺失时安静降级）────
+        await self._voice.start()
+
+        # ── 新增：配置热更新启动 ─────────────────────────────
+        # 设计动机：支持运行时动态调整检测参数，无需重启
+        self._setup_dynamic_config()
 
         # 启动周期性清理任务
         self._retention_task = asyncio.create_task(self._retention_loop())
@@ -195,6 +291,15 @@ class Pipeline:
         logger.info("Stopping pipeline...")
         self._running = False
 
+        # 语音服务先停（含 TTS 播报收尾），再释放音视频资源
+        await self._voice.stop()
+        self.stop_recording()
+
+        # 停止配置热更新
+        if self._dynamic_config is not None:
+            self._dynamic_config.stop()
+            self._dynamic_config = None
+
         # 取消周期性任务
         for task in (self._retention_task, self._cleanup_task, self._backup_task):
             if task and not task.done():
@@ -209,6 +314,17 @@ class Pipeline:
         self._alarm.cleanup()
         self._db.close()
         await self._notifier.stop()
+        # HLS 编码进程先停，再释放 API 服务
+        if self._hls is not None:
+            self._hls.stop()
+            self._hls = None
+        # 流媒体发布器（WebRTC 信令端口等）随 API 服务一并释放
+        if self._stream_publisher is not None:
+            try:
+                self._stream_publisher.stop()
+            except Exception:
+                logger.exception("Stream publisher stop failed")
+            self._stream_publisher = None
         await self._api.stop()
         logger.info("Pipeline stopped")
 
@@ -220,6 +336,204 @@ class Pipeline:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """async context manager 退出，确保资源释放"""
         await self.stop()
+
+    # ── 语音指令回调（供 VoiceService 注入，均为同步可调用）──
+
+    def set_mode(self, mode: str) -> None:
+        """
+        切换检测模式（语音"切换到XX模式"指令）
+
+        模式语义与桌面端模式切换一致：当前为运行状态标记 + 日志，
+        检测行为差异化调度为后续迭代项（前端模式切换亦未改变检测参数）。
+        """
+        if mode not in ("normal", "nap", "public"):
+            logger.warning("未知检测模式: %s", mode)
+            return
+        self._current_mode = mode
+        logger.info("Detection mode changed to: %s", mode)
+
+    @property
+    def current_mode(self) -> str:
+        """当前检测模式（normal / nap / public）"""
+        return self._current_mode
+
+    def ack_all_alerts(self) -> int:
+        """批量确认所有未确认告警（语音"关闭告警"指令）"""
+        acked = 0
+        if self._db is not None:
+            try:
+                result = self._db.query_alerts(page=1, page_size=10000, acknowledged=False)
+                for item in result.get("data", []):
+                    if self._db.ack_alert(item["alert_id"]):
+                        acked += 1
+                logger.info("Voice ack-all: %d alerts acknowledged", acked)
+            except Exception:
+                logger.exception("Voice ack-all failed")
+        return acked
+
+    def get_sensor_data(self) -> tuple[float, float] | None:
+        """
+        读取 RS485 温湿度（语音"查询温湿度"指令）
+
+        复用 frontend/ui/mgt_rs485.py 的 Modbus 读取实现（按文件路径
+        延迟加载，避免 backend 依赖 PyQt 前端包）。读取失败或依赖
+        缺失返回 None，由语音模块播报"传感器异常"。
+        """
+        try:
+            reader = self._load_sensor_reader()
+        except Exception:
+            logger.warning("RS485 传感器读取模块不可用（minimalmodbus/pyserial 未安装？）")
+            return None
+        if reader is None:
+            return None
+        try:
+            temp, hum = reader()
+            if temp is None or hum is None:
+                return None
+            return temp, hum
+        except Exception:
+            logger.exception("RS485 传感器读取失败")
+            return None
+
+    def _load_sensor_reader(self):
+        """按文件路径加载 frontend/ui/mgt_rs485.py 的 read_temp_hum（带缓存）"""
+        cached = getattr(self, "_sensor_reader", None)
+        if cached is not None:
+            return cached
+        import importlib.util
+
+        module_path = (Path(__file__).resolve().parents[3]
+                       / "frontend" / "ui" / "mgt_rs485.py")
+        if not module_path.exists():
+            logger.warning("传感器模块不存在: %s", module_path)
+            return None
+        spec = importlib.util.spec_from_file_location("lg_mgt_rs485", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self._sensor_reader = module.read_temp_hum
+        return self._sensor_reader
+
+    def start_recording(self) -> str:
+        """开始视频录制（语音"开始录制"指令），返回 TTS 提示文本"""
+        if self._recorder is not None:
+            return "录制已在进行中"
+        record_dir = Path(__file__).resolve().parents[2] / "data" / "recordings"
+        record_dir.mkdir(parents=True, exist_ok=True)
+        path = str(record_dir / f"rec_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4")
+        try:
+            self._recorder = _FrameRecorder(
+                path,
+                width=self._config.camera.width,
+                height=self._config.camera.height,
+                fps=self._config.camera.fps,
+                max_sec=60.0,
+            )
+        except Exception:
+            logger.exception("录制器初始化失败")
+            self._recorder = None
+            return "录制开启失败"
+        return "视频录制已开启"
+
+    def stop_recording(self) -> None:
+        """停止视频录制（幂等）"""
+        if self._recorder is None:
+            return
+        recorder, self._recorder = self._recorder, None
+        try:
+            recorder.stop()
+        except Exception:
+            logger.exception("录制器关闭异常")
+
+    def get_recent_logs(self) -> str:
+        """最近告警摘要（语音"查看日志"指令），返回 TTS 播报文本"""
+        if self._db is None:
+            return "日志服务未启动"
+        try:
+            result = self._db.query_alerts(page=1, page_size=5)
+            total = result.get("total", 0)
+            data = result.get("data", [])
+            if not data:
+                return f"最近没有告警记录，历史累计{total}条"
+            latest = data[0]
+            desc = latest.get("description") or latest.get("alert_type", "")
+            return f"最近共{total}条告警，最新一条：{desc}"
+        except Exception:
+            logger.exception("查询最近日志失败")
+            return "日志读取失败"
+
+    def _voice_shutdown(self) -> None:
+        """
+        语音"退出程序"指令：置停运行标志。
+
+        主循环 while self._running 随即退出，进入 main() finally 的
+        统一 pipeline.stop() 清理路径（与 Ctrl+C 行为一致）。
+        """
+        logger.info("Voice shutdown requested")
+        self._running = False
+
+    def _setup_dynamic_config(self) -> None:
+        """
+        设置配置热更新
+
+        设计动机：支持运行时动态调整检测参数，无需重启。
+        监控配置文件变化，自动重新加载并应用新配置。
+        """
+        try:
+            # 获取配置文件路径
+            config_path = Path(__file__).parent.parent.parent / "config" / "default.json"
+            if not config_path.exists():
+                logger.warning("Config file not found: %s", config_path)
+                return
+
+            # 创建动态配置管理器
+            self._dynamic_config = DynamicConfig(config_path)
+
+            # 注册配置变更回调
+            self._dynamic_config.on_change(self._on_config_change)
+
+            # 启动配置监控
+            self._dynamic_config.start()
+            logger.info("Dynamic config started, watching: %s", config_path)
+        except Exception as e:
+            logger.warning("Failed to setup dynamic config: %s", e)
+
+    def _on_config_change(self, new_config: dict) -> None:
+        """
+        配置变更回调
+
+        Args:
+            new_config: 新的配置字典
+        """
+        logger.info("Config changed, applying new settings...")
+
+        try:
+            # 更新检测阈值
+            if "detection" in new_config:
+                det_config = new_config["detection"]
+                if "conf_threshold" in det_config:
+                    self._config.detection.conf_threshold = det_config["conf_threshold"]
+                    logger.info("Updated detection conf_threshold: %s", det_config["conf_threshold"])
+
+            # 更新姿态检测参数
+            if "pose" in new_config:
+                pose_config = new_config["pose"]
+                if "prone_angle_threshold" in pose_config:
+                    self._config.pose.prone_angle_threshold = pose_config["prone_angle_threshold"]
+                    logger.info("Updated pose prone_angle_threshold: %s", pose_config["prone_angle_threshold"])
+                if "prone_frame_threshold" in pose_config:
+                    self._config.pose.prone_frame_threshold = pose_config["prone_frame_threshold"]
+                    logger.info("Updated pose prone_frame_threshold: %s", pose_config["prone_frame_threshold"])
+
+            # 更新告警去重配置
+            if "dedup" in new_config:
+                dedup_config = new_config["dedup"]
+                if "time_window_sec" in dedup_config:
+                    self._config.dedup.time_window_sec = dedup_config["time_window_sec"]
+                    logger.info("Updated dedup time_window_sec: %s", dedup_config["time_window_sec"])
+
+            logger.info("Config changes applied successfully")
+        except Exception as e:
+            logger.error("Failed to apply config changes: %s", e)
 
     async def run(self) -> None:
         """
@@ -254,6 +568,11 @@ class Pipeline:
                 logger.exception("Error processing frame %d", frame.frame_id)
             finally:
                 self._frame_buffer.push(frame)
+                # 语音"开始录制"触发的录制钩子（原始帧，不受推理异常影响）
+                if self._recorder is not None:
+                    self._recorder.write(frame)
+                    if self._recorder.expired:
+                        self.stop_recording()
 
             # 帧率控制：保证不超频，同时 yield 控制权给事件循环
             elapsed = time.monotonic() - loop_start
@@ -459,12 +778,13 @@ class Pipeline:
         """
         处理单条告警
 
-        处理链路：去重检查 -> 日志 -> 声光告警 -> SM4加密 -> 数据库持久化 -> 指标 -> API推送
+        处理链路：去重检查 -> 日志 -> 事件发布 -> 声光告警 -> SM4加密 -> 数据库持久化 -> 指标 -> API推送
 
         设计动机：
             去重检查在最前面，避免重复告警触发后续所有开销。
             数据库写入失败不阻塞主循环（降级为内存模式）。
             alarm.trigger 使用 asyncio.create_task 避免阻塞帧处理。
+            通过事件总线发布告警事件，支持灵活的扩展和订阅。
         """
         # 去重检查：抑制重复告警
         if not self._dedup.should_alert(alert):
@@ -477,6 +797,21 @@ class Pipeline:
             alert.severity.value,
             alert.description,
         )
+
+        # 发布告警事件到事件总线（支持异步处理）
+        # 设计动机：通过事件总线解耦告警处理逻辑，其他模块可以订阅和处理告警事件
+        # frame 可能为 None（如数据库失败降级路径直接构造告警），需空值保护
+        alert_event = Event(
+            name="alert",
+            data={
+                "alert": alert.to_dict(),
+                "frame_id": frame.frame_id if frame is not None else None,
+                "timestamp": frame.timestamp if frame is not None else None,
+            },
+            priority=EventPriority.HIGH if alert.severity.value in ("high", "critical") else EventPriority.NORMAL,
+            source="pipeline",
+        )
+        await self._event_bus.emit_async(alert_event)
 
         # 声光告警（后台任务，不阻塞主循环的帧处理）
         asyncio.create_task(self._alarm.trigger(alert.severity))
@@ -589,13 +924,25 @@ class Pipeline:
         while self._running:
             await asyncio.sleep(interval)
             try:
-                await asyncio.to_thread(self._backup_db_once, datetime.now())
+                # 使用 UTC 时间，与 _db_cleanup_loop 保持一致
+                await asyncio.to_thread(self._backup_db_once, datetime.now(UTC))
             except Exception:
                 logger.exception("Database backup task failed")
 
-    def _backup_db_once(self, now) -> bool:
-        """执行一次备份并清理超期备份（在线程池中运行）"""
+    def _backup_db_once(self, now: datetime) -> bool:
+        """
+        执行一次备份并清理超期备份（在线程池中运行）
+
+        Args:
+            now: 当前 UTC 时间戳
+
+        注意：使用 UTC 时间进行所有时间比较，与 _db_cleanup_loop 保持一致。
+        """
         cfg = self._config.database
+        # 统一为 UTC aware 时间：生产调用传 datetime.now(UTC)，测试可能传 naive
+        # 的 datetime.now()，两者与 mtime_utc 比较需一致时区，否则 TypeError
+        if now.tzinfo is None:
+            now = now.astimezone(UTC)
         backup_dir = Path(cfg.backup_dir)
         backup_dir.mkdir(parents=True, exist_ok=True)
 
@@ -604,11 +951,14 @@ class Pipeline:
         ok = self._db.backup(str(dest))
 
         # 清理超期备份（保留 cfg.backup_retention_days 天）
+        # 使用 UTC 时间进行比较，与 _db_cleanup_loop 保持一致
         try:
             cutoff = now - timedelta(days=cfg.backup_retention_days)
             for old in backup_dir.glob("loongguard_*.db"):
                 try:
-                    if datetime.fromtimestamp(old.stat().st_mtime) < cutoff:
+                    # 将文件修改时间转换为 UTC 进行比较
+                    mtime_utc = datetime.fromtimestamp(old.stat().st_mtime, tz=UTC)
+                    if mtime_utc < cutoff:
                         old.unlink()
                         logger.info("清理过期备份: %s", old.name)
                 except OSError:

@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="layout-wrap">
+    <div class="sidebar">
+        <div class="sidebar-logo">
+            <h3><i class="fa-solid fa-child-reaching"></i>幼儿园 AI 安全卫士后端管理系统</h3>
+        </div>
+        <ul class="sidebar-menu">
+            <li><a href="/admin/index"><i class="fa-solid fa-house"></i> 首页仪表盘</a></li>
+            <li><a href="/admin/student"><i class="fa-solid fa-child"></i> 幼儿管理</a></li>
+            <li><a href="/admin/class" class="active"><i class="fa-solid fa-chalkboard-user"></i> 班级管理</a></li>
+            <li><a href="/admin/parent"><i class="fa-solid fa-users"></i> 家长管理</a></li>
+            <li><a href="/admin/import"><i class="fa-solid fa-file-import"></i> 批量导入</a></li>
+            <li><a href="/admin/growth"><i class="fa-solid fa-camera"></i> 成长记录</a></li>
+            <li><a href="/admin/notice"><i class="fa-solid fa-bullhorn"></i> 公告管理</a></li>
+            <li><a href="/admin/account"><i class="fa-solid fa-user-shield"></i> 管理员账号</a></li>
+            <li><a href="/admin/logout"><i class="fa-solid fa-right-from-bracket"></i> 退出登录</a></li>
+        </ul>
+    </div>
+    <div class="main-content">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <h2 class="page-title"><i class="fa-solid fa-chalkboard-user"></i> 班级信息管理</h2>
+            <div>
+                <button class="btn btn-pink" onclick="openModal('addClassModal')">新增班级</button>
+                <a href="/api/admin/class/export"><button class="btn btn-primary">导出</button></a>
+            </div>
+        </div>
+        <div class="card">
+            <div style="display:flex;gap:10px;margin-bottom:15px;">
+                <input class="form-input" id="searchKey" placeholder="搜索班级名称" style="width:300px;">
+                <button class="btn btn-pink" onclick="loadList(1)">搜索</button>
+            </div>
+            <div class="table-wrap">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>班级名称</th>
+                            <th>年份</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="classTbody"></tbody>
+                </table>
+            </div>
+            <div class="pagination" id="pageBox"></div>
+        </div>
+    </div>
+</div>
+
+<!-- 新增班级弹窗 -->
+<div class="modal-mask" id="addClassModal">
+    <div class="modal-box">
+        <div class="modal-head">
+            <span>新增班级</span>
+            <span class="modal-close">&times;</span>
+        </div>
+        <form id="addClassForm">
+            <div class="form-item">
+                <label>班级名称</label>
+                <input class="form-input" name="class_name" required>
+            </div>
+            <div class="form-item">
+                <label>年份</label>
+                <input class="form-input" name="year" type="number" value="2026" required>
+            </div>
+            <div style="text-align:right;margin-top:20px;">
+                <button type="button" class="btn btn-gray" onclick="closeModal('addClassModal')">取消</button>
+                <button type="submit" class="btn btn-pink">提交</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 编辑班级弹窗 -->
+<div class="modal-mask" id="editClassModal">
+    <div class="modal-box">
+        <div class="modal-head">
+            <span>编辑班级</span>
+            <span class="modal-close">&times;</span>
+        </div>
+        <form id="editClassForm">
+            <input type="hidden" name="id">
+            <div class="form-item">
+                <label>班级名称</label>
+                <input class="form-input" name="class_name" required>
+            </div>
+            <div class="form-item">
+                <label>年份</label>
+                <input class="form-input" name="year" type="number" required>
+            </div>
+            <div style="text-align:right;margin-top:20px;">
+                <button type="button" class="btn btn-gray" onclick="closeModal('editClassModal')">取消</button>
+                <button type="submit" class="btn btn-pink">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+let currentPage = 1;
+const pageSize = 10;
+
+async function loadList(page) {
+    currentPage = page;
+    const keyword = $('#searchKey').value.trim();
+    const res = await request(`/api/admin/class/list?page=${page}&page_size=${pageSize}&keyword=${keyword}`);
+    const tbody = $('#classTbody');
+    tbody.innerHTML = '';
+    res.data.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${item.id}</td>
+            <td>${item.class_name}</td>
+            <td>${item.year}</td>
+            <td>
+                <button class="btn btn-sm btn-warning" onclick="editClass(${item.id}, '${item.class_name}', ${item.year})">编辑</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteClass(${item.id})">删除</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+    renderPagination(res.total, page, pageSize, loadList);
+}
+
+function editClass(id, name, year) {
+    const form = $('#editClassForm');
+    form.elements['id'].value = id;
+    form.elements['class_name'].value = name;
+    form.elements['year'].value = year;
+    openModal('editClassModal');
+}
+
+async function deleteClass(id) {
+    if(!confirm('确认删除该班级？')) return;
+    const res = await request(`/api/admin/class/delete?id=${id}`, 'DELETE');
+    if(res.code === 0) {
+        msg('删除成功');
+        loadList(currentPage);
+    } else {
+        msg(res.msg || '删除失败');
+    }
+}
+
+// 新增班级提交
+$('#addClassForm').onsubmit = async e => {
+    e.preventDefault();
+    const data = new FormData(e.target);
+    const params = new URLSearchParams(data);
+    const res = await request(`/api/admin/class/add?${params.toString()}`, 'POST');
+    if(res.code === 0) {
+        msg('添加成功');
+        closeModal('addClassModal');
+        loadList(1);
+        e.target.reset();
+    } else {
+        msg(res.msg || '添加失败');
+    }
+};
+
+// 编辑班级提交
+$('#editClassForm').onsubmit = async e => {
+    e.preventDefault();
+    const data = new FormData(e.target);
+    const id = data.get('id');
+    const params = new URLSearchParams(data);
+    const res = await request(`/api/admin/class/edit?id=${id}&${params.toString()}`, 'PUT');
+    if(res.code === 0) {
+        msg('更新成功');
+        closeModal('editClassModal');
+        loadList(currentPage);
+    } else {
+        msg(res.msg || '更新失败');
+    }
+};
+
+window.onload = () => loadList(1);
+</script>
+{% endblock %}
