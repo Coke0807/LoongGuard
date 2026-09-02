@@ -26,7 +26,8 @@ import asyncio
 import logging
 import threading
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from loongguard.voice.command_handler import (
     SphinxCommandRecognizer,

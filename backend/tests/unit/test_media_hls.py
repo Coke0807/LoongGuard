@@ -21,9 +21,9 @@ import pytest_asyncio
 
 aiohttp = pytest.importorskip("aiohttp", reason="aiohttp is required for API tests")
 
-from config.settings import APIConfig, MediaConfig
-from loongguard.api.server import AlertAPIServer
-from loongguard.media.hls_publisher import (
+from config.settings import APIConfig, MediaConfig  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+from loongguard.api.server import AlertAPIServer  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+from loongguard.media.hls_publisher import (  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
     HLSPublisher,
     rewrite_playlist,
     sign_stream_token,
@@ -222,7 +222,8 @@ class TestHLSPublisherEnabledGate:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("LG_HLS_STREAM_SECRET", _SECRET)
-        pub = HLSPublisher(
+        # 仅验证 ffmpeg_bin=None 时构造不抛异常（None 会触发自动探测，结果不确定故不断言）
+        HLSPublisher(
             MediaConfig(), output_dir=tmp_path, stream_base_url="http://x/stream",
             ffmpeg_bin=None,
         )

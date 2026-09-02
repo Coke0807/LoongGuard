@@ -17,10 +17,13 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
-from config.settings import DetectionConfig
-from loongguard.detection.inference_onnx import InferenceResult, LoongONNXPredictor
-from loongguard.detection.yolo26_nano import YOLO26Nano
-from loongguard.utils.schema import BoundingBox
+from config.settings import DetectionConfig  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+from loongguard.detection.inference_onnx import (  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+    InferenceResult,
+    LoongONNXPredictor,
+)
+from loongguard.detection.yolo26_nano import YOLO26Nano  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+from loongguard.utils.schema import BoundingBox  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
 
 # 模型路径
 YOLO_MODEL_PATH = str(PROJECT_ROOT / "models" / "best.onnx")

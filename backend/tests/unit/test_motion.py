@@ -19,8 +19,11 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
-from config.settings import MotionConfig
-from loongguard.motion.frame_diff import FrameDiffDetector, MotionRegion
+from config.settings import MotionConfig  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+from loongguard.motion.frame_diff import (  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+    FrameDiffDetector,
+    MotionRegion,
+)
 
 
 class TestFrameDiffDetector:

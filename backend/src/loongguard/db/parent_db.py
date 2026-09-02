@@ -22,7 +22,6 @@ import logging
 import os
 import sqlite3
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +242,7 @@ def check_watch_time(periods) -> bool:
 
 
 # ==================== 班级相关 ====================
-def get_class_by_name_year(name: str, year: int) -> Optional[Dict]:
+def get_class_by_name_year(name: str, year: int) -> dict | None:
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT * FROM classinfo WHERE class_name = ? AND year = ?", (name, year))
@@ -262,7 +261,7 @@ def create_class(name: str, year: int) -> int:
     return cid
 
 
-def list_class(page: int, page_size: int, keyword: str = "") -> Tuple[int, List[Dict]]:
+def list_class(page: int, page_size: int, keyword: str = "") -> tuple[int, list[dict]]:
     conn = get_conn()
     cur = conn.cursor()
     offset = (page - 1) * page_size
@@ -308,7 +307,7 @@ def delete_class(cid: int) -> bool:
 
 
 # ==================== 家长相关 ====================
-def get_parent_by_openid(openid: str) -> Optional[Dict]:
+def get_parent_by_openid(openid: str) -> dict | None:
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT * FROM parent WHERE openid = ?", (openid,))
@@ -317,7 +316,7 @@ def get_parent_by_openid(openid: str) -> Optional[Dict]:
     return dict(row) if row else None
 
 
-def get_parent_by_phone(phone: str) -> Optional[Dict]:
+def get_parent_by_phone(phone: str) -> dict | None:
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT * FROM parent WHERE phone = ?", (phone,))
@@ -361,7 +360,7 @@ def update_parent_wx_info(openid: str, nickname: str = None, avatar: str = None)
         conn.close()
 
 
-def bind_phone_to_openid(phone: str, real_openid: str) -> Tuple[bool, str, Optional[Dict]]:
+def bind_phone_to_openid(phone: str, real_openid: str) -> tuple[bool, str, dict | None]:
     """将微信真实 openid 合并到后台按手机号预录入的家长记录（import_ 占位）"""
     conn = get_conn()
     cur = conn.cursor()
@@ -406,7 +405,7 @@ def bind_phone_to_openid(phone: str, real_openid: str) -> Tuple[bool, str, Optio
         conn.close()
 
 
-def get_parent_bind_students(openid: str) -> List[Dict]:
+def get_parent_bind_students(openid: str) -> list[dict]:
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -434,7 +433,7 @@ def get_parent_bind_students(openid: str) -> List[Dict]:
         conn.close()
 
 
-def check_parent_permission(openid: str, student_id: int, time_periods) -> Tuple[bool, str]:
+def check_parent_permission(openid: str, student_id: int, time_periods) -> tuple[bool, str]:
     binds = get_parent_bind_students(openid)
     target = None
     for item in binds:
@@ -450,7 +449,7 @@ def check_parent_permission(openid: str, student_id: int, time_periods) -> Tuple
     return True, "允许观看"
 
 
-def list_parent(page: int, page_size: int, keyword: str = "") -> Tuple[int, List[Dict]]:
+def list_parent(page: int, page_size: int, keyword: str = "") -> tuple[int, list[dict]]:
     conn = get_conn()
     cur = conn.cursor()
     offset = (page - 1) * page_size
@@ -483,7 +482,7 @@ def list_parent(page: int, page_size: int, keyword: str = "") -> Tuple[int, List
 
 
 # ==================== 学生相关 ====================
-def get_student_by_name_class(name: str, class_id: int) -> Optional[Dict]:
+def get_student_by_name_class(name: str, class_id: int) -> dict | None:
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT * FROM student WHERE student_name = ? AND class_id = ?", (name, class_id))
@@ -492,7 +491,7 @@ def get_student_by_name_class(name: str, class_id: int) -> Optional[Dict]:
     return dict(row) if row else None
 
 
-def list_student(page: int, page_size: int, keyword: str = "") -> Tuple[int, List[Dict]]:
+def list_student(page: int, page_size: int, keyword: str = "") -> tuple[int, list[dict]]:
     conn = get_conn()
     cur = conn.cursor()
     offset = (page - 1) * page_size
@@ -558,7 +557,7 @@ def unbind_parent_student(parent_id: int, student_id: int) -> None:
 
 
 # ==================== 导出查询 ====================
-def get_student_parent_bindings() -> List[Dict]:
+def get_student_parent_bindings() -> list[dict]:
     """返回每个学生-家长的绑定关系（一行一个绑定），包含班级ID"""
     conn = get_conn()
     cur = conn.cursor()
@@ -586,7 +585,7 @@ def get_student_parent_bindings() -> List[Dict]:
     return [dict(r) for r in rows]
 
 
-def get_parent_student_bindings() -> List[Dict]:
+def get_parent_student_bindings() -> list[dict]:
     conn = get_conn()
     cur = conn.cursor()
     cur.execute('''
@@ -612,7 +611,7 @@ def get_parent_student_bindings() -> List[Dict]:
 
 
 # ==================== 管理员账号 ====================
-def get_admin_by_username(username: str) -> Optional[Dict]:
+def get_admin_by_username(username: str) -> dict | None:
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT * FROM admin_account WHERE username=?", (username,))
@@ -621,7 +620,7 @@ def get_admin_by_username(username: str) -> Optional[Dict]:
     return dict(row) if row else None
 
 
-def list_admin(page: int, page_size: int) -> Tuple[int, List[Dict]]:
+def list_admin(page: int, page_size: int) -> tuple[int, list[dict]]:
     conn = get_conn()
     cur = conn.cursor()
     offset = (page - 1) * page_size
@@ -635,7 +634,7 @@ def list_admin(page: int, page_size: int) -> Tuple[int, List[Dict]]:
 
 
 # ==================== 成长记录（管理后台） ====================
-def list_growth(page: int, page_size: int, keyword: str = "") -> Tuple[int, List[Dict]]:
+def list_growth(page: int, page_size: int, keyword: str = "") -> tuple[int, list[dict]]:
     conn = get_conn()
     cur = conn.cursor()
     offset = (page - 1) * page_size
@@ -657,7 +656,7 @@ def list_growth(page: int, page_size: int, keyword: str = "") -> Tuple[int, List
 
 
 def create_growth(title: str, image_path: str, record_date: str,
-                  student_id: Optional[int] = None) -> int:
+                  student_id: int | None = None) -> int:
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
@@ -670,7 +669,7 @@ def create_growth(title: str, image_path: str, record_date: str,
 
 
 def update_growth(gid: int, title: str, image_path: str, record_date: str,
-                  student_id: Optional[int] = None) -> None:
+                  student_id: int | None = None) -> None:
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
@@ -690,7 +689,7 @@ def delete_growth(gid: int) -> bool:
     return affected > 0
 
 
-def get_growth_list(openid: str) -> List[Dict]:
+def get_growth_list(openid: str) -> list[dict]:
     """小程序侧：当前家长绑定幼儿的成长记录（含未关联学生的全员记录）"""
     conn = get_conn()
     try:
@@ -734,7 +733,7 @@ NOTICE_TYPE_MAP = {
 }
 
 
-def list_notice(page: int, page_size: int, keyword: str = "") -> Tuple[int, List[Dict]]:
+def list_notice(page: int, page_size: int, keyword: str = "") -> tuple[int, list[dict]]:
     conn = get_conn()
     cur = conn.cursor()
     offset = (page - 1) * page_size
@@ -785,7 +784,7 @@ def delete_notice(nid: int) -> bool:
     return affected > 0
 
 
-def get_notice_list(openid: str) -> List[Dict]:
+def get_notice_list(openid: str) -> list[dict]:
     """小程序侧：全部公告 + 当前家长已读状态"""
     conn = get_conn()
     try:

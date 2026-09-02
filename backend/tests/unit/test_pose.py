@@ -19,9 +19,13 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
-from config.settings import PoseConfig
-from loongguard.pose.movenet import MoveNetLightning
-from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType
+from config.settings import PoseConfig  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+from loongguard.pose.movenet import MoveNetLightning  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+from loongguard.utils.schema import (  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+    AlertLog,
+    AlertSeverity,
+    AlertType,
+)
 
 # 模型路径
 MOVENET_MODEL_PATH = str(PROJECT_ROOT / "models" / "movenet_lightning_int8.onnx")

@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
 
 from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType, BoundingBox
@@ -155,7 +153,8 @@ def assert_alert_log_equal(
     if len(alert1.detections) != len(alert2.detections):
         return False
 
-    for det1, det2 in zip(alert1.detections, alert2.detections):
+    # 上方已校验两侧 detections 长度相等，strict=True 可在意外不等长时立即暴露
+    for det1, det2 in zip(alert1.detections, alert2.detections, strict=True):
         if not assert_bounding_box_equal(det1, det2):
             return False
 

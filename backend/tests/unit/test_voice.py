@@ -29,7 +29,6 @@ from loongguard.voice import (
     match_command_key,
 )
 
-
 # ── match_command_key ────────────────────────────────────────
 
 

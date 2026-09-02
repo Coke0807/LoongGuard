@@ -24,14 +24,18 @@ import pytest_asyncio
 # aiohttp 可选依赖检测
 aiohttp = pytest.importorskip("aiohttp", reason="aiohttp is required for API tests")
 
-from config.settings import APIConfig
-from loongguard.api.server import (
+from config.settings import APIConfig  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+from loongguard.api.server import (  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
     AlertAPIServer,
     AnalysisStatus,
     VideoAnalyzer,
     _TokenBucketRateLimiter,
 )
-from loongguard.utils.schema import AlertLog, AlertSeverity, AlertType
+from loongguard.utils.schema import (  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+    AlertLog,
+    AlertSeverity,
+    AlertType,
+)
 
 # ── 辅助函数 ─────────────────────────────────────────────────
 

@@ -20,7 +20,6 @@ import ctypes.util
 import logging
 import os
 import platform
-import struct
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -198,7 +197,7 @@ class HardwareSM4:
             logger.debug("Created crypto session: %d", session_id)
             return session_id
         except Exception as e:
-            raise RuntimeError(f"Failed to create crypto session: {e}")
+            raise RuntimeError(f"Failed to create crypto session: {e}") from e
 
     def _close_session(self) -> None:
         """关闭加密会话"""
@@ -241,7 +240,7 @@ class HardwareSM4:
             fcntl.ioctl(self._fd, _CIOCCRYPT, operation)
             return bytes(operation.dst)
         except Exception as e:
-            raise RuntimeError(f"Crypto operation failed: {e}")
+            raise RuntimeError(f"Crypto operation failed: {e}") from e
 
     def encrypt(self, data: bytes) -> bytes:
         """

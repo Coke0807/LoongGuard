@@ -29,11 +29,11 @@ import cv2
 
 PROJECT_ROOT = Path(__file__).parent.parent
 
-from config import load_config
-from loongguard.camera.v4l2_capture import V4L2Capture
-from loongguard.detection.yolo26_nano import YOLO26Nano
-from loongguard.motion.frame_diff import FrameDiffDetector
-from loongguard.pose.movenet import MoveNetLightning
+from config import load_config  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+from loongguard.camera.v4l2_capture import V4L2Capture  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+from loongguard.detection.yolo26_nano import YOLO26Nano  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+from loongguard.motion.frame_diff import FrameDiffDetector  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+from loongguard.pose.movenet import MoveNetLightning  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
 
 
 def main() -> int:

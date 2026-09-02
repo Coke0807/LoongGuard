@@ -22,8 +22,8 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
-from config.settings import AppConfig
-from loongguard.pipeline import Pipeline
+from config.settings import AppConfig  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+from loongguard.pipeline import Pipeline  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 

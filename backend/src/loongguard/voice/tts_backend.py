@@ -26,7 +26,7 @@ class TTSBackend(ABC):
     def speak(self, text: str) -> None:
         """同步播报一段中文文本（阻塞至播报完成或放弃）"""
 
-    def stop(self) -> None:
+    def stop(self) -> None:  # noqa: B027 可选覆写钩子：子类按需实现，默认无操作
         """释放后端资源（默认无操作）"""
 
 
@@ -80,8 +80,7 @@ class EspeakTTS(TTSBackend):
             subprocess.run(
                 ["espeak", "-v", "zh", "-s", str(self._rate),
                  "-a", str(self._amplitude), text],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 check=True,
                 timeout=10,
             )

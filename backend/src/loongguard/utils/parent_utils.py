@@ -14,7 +14,6 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Dict, List
 
 import jwt
 from openpyxl import Workbook, load_workbook
@@ -164,10 +163,10 @@ def _num_str(v) -> str | None:
     return str(v)
 
 
-def parse_data_import_excel(file_path: str) -> List[Dict]:
+def parse_data_import_excel(file_path: str) -> list[dict]:
     wb = load_workbook(file_path)
     ws = wb.active
-    items: List[Dict] = []
+    items: list[dict] = []
     for row in ws.iter_rows(min_row=2, values_only=True):
         if not row or not any(row):
             continue
@@ -181,7 +180,7 @@ def parse_data_import_excel(file_path: str) -> List[Dict]:
         watch_switch = row[5] if len(row) > 5 else 1
         openid = str(row[6]) if len(row) > 6 and row[6] is not None else None
 
-        errors: List[str] = []
+        errors: list[str] = []
         if not student_name:
             errors.append("学生姓名缺失")
         if not class_name:

@@ -68,7 +68,7 @@ def sign_stream_token(secret: str, ttl_sec: int = 21600,
                       now: float | None = None) -> str:
     """签发带过期时间的流观看 token：<exp>-<hmac("hls:<exp>")[:32]>"""
     exp = int(now if now is not None else time.time()) + int(ttl_sec)
-    mac = hmac.new(secret.encode("utf-8"), f"hls:{exp}".encode("utf-8"),
+    mac = hmac.new(secret.encode("utf-8"), f"hls:{exp}".encode(),
                    hashlib.sha256).hexdigest()[:32]
     return f"{exp}-{mac}"
 
@@ -86,7 +86,7 @@ def verify_stream_token(secret: str, token: str,
     now_ts = now if now is not None else time.time()
     if now_ts > exp:
         return False
-    expected = hmac.new(secret.encode("utf-8"), f"hls:{exp}".encode("utf-8"),
+    expected = hmac.new(secret.encode("utf-8"), f"hls:{exp}".encode(),
                         hashlib.sha256).hexdigest()[:32]
     return hmac.compare_digest(mac, expected)
 

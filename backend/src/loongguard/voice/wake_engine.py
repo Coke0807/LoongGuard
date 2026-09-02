@@ -44,7 +44,7 @@ class AudioCapture(ABC):
     def read(self, nbytes: int) -> bytes:
         """读取指定字节数的 PCM 数据（阻塞直至读满或流结束）"""
 
-    def close(self) -> None:
+    def close(self) -> None:  # noqa: B027 可选覆写钩子：子类按需实现，默认无操作
         """释放采集资源（默认无操作）"""
 
     @property
@@ -202,8 +202,7 @@ class WakeEngine:
             )
             return
         try:
-            import openwakeword  # noqa: PLC0415 延迟导入：可选依赖
-            from openwakeword.model import Model
+            from openwakeword.model import Model  # noqa: PLC0415 延迟导入：可选依赖
         except ImportError:
             logger.warning(
                 "openwakeword 未安装（pip install openwakeword），唤醒功能停用"

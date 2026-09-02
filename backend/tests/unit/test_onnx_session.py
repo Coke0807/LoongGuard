@@ -15,7 +15,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
-from loongguard.utils.onnx_session import (
+from loongguard.utils.onnx_session import (  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
     _INTRA_OP_THREADS_ENV,
     _default_intra_op_threads,
     create_session,

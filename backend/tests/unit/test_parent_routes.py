@@ -23,9 +23,9 @@ import pytest_asyncio
 
 aiohttp = pytest.importorskip("aiohttp", reason="aiohttp is required for API tests")
 
-from config.settings import APIConfig
-from loongguard.api.server import AlertAPIServer
-from loongguard.utils import parent_utils
+from config.settings import APIConfig  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+from loongguard.api.server import AlertAPIServer  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
+from loongguard.utils import parent_utils  # noqa: E402 本地包导入需在 PROJECT_ROOT 设置之后
 
 # 测试用 JWT 密钥（与生产 .env 隔离）
 _TEST_ADMIN_SECRET = "test-admin-secret"
